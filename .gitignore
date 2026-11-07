@@ -6,3 +6,4 @@
 .DS_Store
 /plugins/
 Cargo.lock
+native-build.log

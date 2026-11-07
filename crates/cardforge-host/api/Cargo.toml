@@ -6,9 +6,9 @@ publish = false
 license = "MIT"
 description = "CardForge Horizon trait mod — wires native hooks into cardforge-core."
 
-# Standalone package (excluded from the cardforgerust workspace) so
-# horizon-launcher can treat this folder as a native-mod api crate.
-[workspace]
+# Excluded from the cardforgerust workspace (see root Cargo.toml). Do not add
+# an empty [workspace] here: native-build stages this package into Horizon's
+# workspace and a nested [workspace] table fails the resolve.
 
 [dependencies]
 # The launcher rewrites this to the staged Horizon source.
