@@ -1,8 +1,8 @@
-//! Warps / travel subset from ServerPlugin (`/warp`, `/setwarp`, `/delwarp`).
+//! Warps with real teleport via host actions.
 
 use cardforge_api::{
-    colorize, Command, CommandSender, Plugin, PluginContext, PluginDescription, PluginResult,
-    PluginServices, Server,
+    colorize, Command, CommandSender, HostAction, Plugin, PluginContext, PluginDescription,
+    PluginResult, PluginServices, Server,
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -61,22 +61,24 @@ impl Plugin for TravelPlugin {
     fn description(&self) -> PluginDescription {
         let mut d = PluginDescription::new("travel", "Travel", "0.1.0");
         d.authors = vec!["icedmoca".into()];
-        d.description = "Named warps (/warp /setwarp /delwarp).".into();
+        d.description = "Named warps with teleport (/warp /setwarp /delwarp).".into();
         d
     }
 
     fn on_load(&mut self, services: &dyn PluginServices) -> PluginResult {
         services.permissions().set_default("cardforge.travel.warp", true);
+        let sink = services.action_sink();
         let shared = Arc::clone(&self.shared);
 
         let s1 = Arc::clone(&shared);
+        let sink1 = Arc::clone(&sink);
         services.register_command(
             Command::new(
                 "warp",
                 "warp <name:word>",
-                "Teleport to a warp (lists when no name)",
+                "Teleport to a warp",
                 "travel",
-                move |sender, _label, args| warp_cmd(&s1, sender, args),
+                move |sender, _label, args| warp_cmd(&s1, sink1.as_ref(), sender, args),
             )
             .aliases(["warps"])
             .permission("cardforge.travel.warp"),
@@ -87,7 +89,7 @@ impl Plugin for TravelPlugin {
             Command::new(
                 "setwarp",
                 "setwarp <name:word>",
-                "Create a warp at spawn placeholder coords",
+                "Create a warp at your position",
                 "travel",
                 move |sender, _label, args| setwarp_cmd(&s2, sender, args),
             )
@@ -123,7 +125,12 @@ impl Plugin for TravelPlugin {
     }
 }
 
-fn warp_cmd(shared: &Shared, _sender: &CommandSender, args: &[&str]) -> Vec<String> {
+fn warp_cmd(
+    shared: &Shared,
+    sink: &(dyn Fn(HostAction) + Send + Sync),
+    sender: &CommandSender,
+    args: &[&str],
+) -> Vec<String> {
     if args.is_empty() {
         let g = shared.file.lock();
         if g.warps.is_empty() {
@@ -137,38 +144,49 @@ fn warp_cmd(shared: &Shared, _sender: &CommandSender, args: &[&str]) -> Vec<Stri
             names.join("&7, &f")
         ))];
     }
+    let CommandSender::Player(player) = sender else {
+        return vec![colorize("&cPlayers only.")];
+    };
     let name = args[0].to_ascii_lowercase();
     let g = shared.file.lock();
-    match g.warps.get(&name) {
-        Some(w) => vec![
-            colorize(&format!("&aWarp &f{name}&a → &7{} {:.1} {:.1} {:.1}", w.world, w.x, w.y, w.z)),
-            colorize(
-                "&8Teleport apply needs Horizon Host position API; coords are stored.",
-            ),
-        ],
-        None => vec![colorize(&format!("&cNo warp called &f{name}&c."))],
-    }
+    let Some(w) = g.warps.get(&name).cloned() else {
+        return vec![colorize(&format!("&cNo warp called &f{name}&c."))];
+    };
+    drop(g);
+    sink(HostAction::Teleport {
+        uuid: player.uuid,
+        dimension: w.world.clone(),
+        position: [w.x, w.y, w.z],
+        yaw: w.yaw,
+        pitch: w.pitch,
+    });
+    vec![colorize(&format!(
+        "&aWarping to &f{name}&a (&7{} {:.1} {:.1} {:.1}&a)",
+        w.world, w.x, w.y, w.z
+    ))]
 }
 
 fn setwarp_cmd(shared: &Shared, sender: &CommandSender, args: &[&str]) -> Vec<String> {
+    let CommandSender::Player(player) = sender else {
+        return vec![colorize("&cPlayers only.")];
+    };
     let Some(name) = args.first().copied() else {
         return vec![colorize("&7Usage: /setwarp <name>")];
     };
     let name = name.to_ascii_lowercase();
-    // Without a live position hook, park warps at overworld spawn until Host exposes coords.
     let warp = Warp {
-        world: "minecraft:overworld".into(),
-        x: 0.5,
-        y: 64.0,
-        z: 0.5,
-        yaw: 0.0,
-        pitch: 0.0,
+        world: player.dimension.clone(),
+        x: player.position[0],
+        y: player.position[1],
+        z: player.position[2],
+        yaw: player.yaw,
+        pitch: player.pitch,
     };
-    shared.file.lock().warps.insert(name.clone(), warp);
+    shared.file.lock().warps.insert(name.clone(), warp.clone());
     shared.save();
-    let who = sender.name();
     vec![colorize(&format!(
-        "&aSet warp &f{name}&a at spawn placeholder &8(by {who})"
+        "&aSet warp &f{name}&a at &7{} {:.1} {:.1} {:.1}",
+        warp.world, warp.x, warp.y, warp.z
     ))]
 }
 

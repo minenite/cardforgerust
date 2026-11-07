@@ -1,8 +1,8 @@
-//! Network ranks + chat prefix (ported from ServerPlugin Rank / RankStore).
+//! Network ranks + chat prefixes (broadcast rewrite via host).
 
 use cardforge_api::{
-    colorize, Command, CommandSender, EventPriority, Plugin, PluginContext, PluginDescription,
-    PluginResult, PluginServices, Server,
+    colorize, Command, CommandSender, EventPriority, HostAction, Plugin, PluginContext,
+    PluginDescription, PluginResult, PluginServices, Server, Cancellable,
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Hierarchy order matches ServerPlugin (lower index = higher authority).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 enum Rank {
@@ -77,10 +76,6 @@ impl Rank {
             Self::Vip => format!("&bVIP &7{name}"),
         }
     }
-
-    fn at_least(self, other: Self) -> bool {
-        (self as u8) <= (other as u8)
-    }
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -104,10 +99,7 @@ impl Shared {
     }
 
     fn set_rank(&self, uuid: Uuid, rank: Rank) {
-        self.file
-            .lock()
-            .ranks
-            .insert(uuid.to_string(), rank);
+        self.file.lock().ranks.insert(uuid.to_string(), rank);
         self.save();
     }
 
@@ -121,7 +113,7 @@ impl Shared {
     }
 }
 
-/// Ranks plugin: `/rank`, chat name colouring via format rewrite.
+/// Ranks plugin.
 pub struct RanksPlugin {
     shared: Arc<Shared>,
 }
@@ -147,15 +139,22 @@ impl Plugin for RanksPlugin {
 
     fn on_load(&mut self, services: &dyn PluginServices) -> PluginResult {
         services.permissions().set_default("cardforge.ranks.view", true);
+        let sink = services.action_sink();
         let shared_chat = Arc::clone(&self.shared);
         services.listen_player_chat(
             "ranks",
-            EventPriority::Low,
+            EventPriority::High,
             Box::new(move |event| {
+                if event.is_cancelled() {
+                    return;
+                }
                 let rank = shared_chat.rank_of(event.player.uuid);
                 let tagged = rank.prefix(&event.player.name);
-                // Format is for plugins / future unsigned chat; Horizon signed chat ignores it.
+                // Cancel signed broadcast; host rebroadcasts this line for everyone.
                 event.format = format!("{tagged}&r: &f{{message}}");
+                event.set_cancelled(true);
+                let line = event.rendered();
+                sink(HostAction::Broadcast { line });
             }),
         );
 
@@ -195,10 +194,7 @@ fn rank_cmd(shared: &Shared, sender: &CommandSender, args: &[&str]) -> Vec<Strin
                 return vec![colorize("&7Console has no rank.")];
             };
             let r = shared.rank_of(p.uuid);
-            vec![colorize(&format!(
-                "&7Your rank: {}",
-                r.prefix(&p.name)
-            ))]
+            vec![colorize(&format!("&7Your rank: {}", r.prefix(&p.name)))]
         }
         "set" => {
             if sender.permission_level() < 3 {
@@ -210,45 +206,31 @@ fn rank_cmd(shared: &Shared, sender: &CommandSender, args: &[&str]) -> Vec<Strin
             let Some(rank) = Rank::parse(rank_s) else {
                 return vec![colorize("&cUnknown rank.")];
             };
-            // Name-keyed offline id until a player directory exists.
-            let uuid = name_uuid(name);
-            shared.set_rank(uuid, rank);
-            // Also set if sender targets self by name.
             if let CommandSender::Player(p) = sender {
                 if p.name.eq_ignore_ascii_case(name) {
                     shared.set_rank(p.uuid, rank);
                 }
             }
-            let _ = rank.at_least(Rank::Default);
-            vec![colorize(&format!(
-                "&aSet &f{name}&a to &f{}",
-                rank_label(rank)
-            ))]
+            // Also store under name-hash for offline assignment until they join.
+            let mut bytes = [0u8; 16];
+            for (i, b) in name.to_ascii_lowercase().bytes().enumerate() {
+                bytes[i % 16] ^= b.wrapping_add(i as u8);
+            }
+            bytes[6] = (bytes[6] & 0x0f) | 0x40;
+            bytes[8] = (bytes[8] & 0x3f) | 0x80;
+            shared.set_rank(Uuid::from_bytes(bytes), rank);
+            let label = if rank.label().is_empty() {
+                "DEFAULT"
+            } else {
+                rank.label()
+            };
+            vec![colorize(&format!("&aSet &f{name}&a to &f{label}"))]
         }
         "list" => vec![colorize(
             "&7Ranks: &fOWNER ADMIN DEV SMOD MOD TMOD BUILDER ELITE MVP VIP DEFAULT",
         )],
         _ => vec![colorize("&7/rank <me|set|list>")],
     }
-}
-
-fn rank_label(rank: Rank) -> String {
-    let l = rank.label();
-    if l.is_empty() {
-        "DEFAULT".into()
-    } else {
-        l.into()
-    }
-}
-
-fn name_uuid(name: &str) -> Uuid {
-    let mut bytes = [0u8; 16];
-    for (i, b) in name.to_ascii_lowercase().bytes().enumerate() {
-        bytes[i % 16] ^= b.wrapping_add(i as u8);
-    }
-    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4-ish
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    Uuid::from_bytes(bytes)
 }
 
 /// Construct for in-process registration.

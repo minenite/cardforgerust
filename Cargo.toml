@@ -7,6 +7,7 @@ members = [
     "crates/cardforge-host/api/cf-friends",
     "crates/cardforge-host/api/cf-ranks",
     "crates/cardforge-host/api/cf-travel",
+    "crates/cardforge-host/api/example-so-plugin",
 ]
 exclude = [
     # Built by horizon-launcher native-build; depends on horizon-client.
@@ -19,6 +20,7 @@ default-members = [
     "crates/cardforge-host/api/cf-friends",
     "crates/cardforge-host/api/cf-ranks",
     "crates/cardforge-host/api/cf-travel",
+    "crates/cardforge-host/api/example-so-plugin",
 ]
 
 [workspace.package]

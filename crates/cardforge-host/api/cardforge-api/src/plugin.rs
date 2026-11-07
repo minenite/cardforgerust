@@ -1,5 +1,6 @@
 //! Plugin trait and description.
 
+use crate::actions::{HostAction, OnlinePlayer};
 use crate::command::Command;
 use crate::event::{
     EventPriority, GameTickEvent, PlayerChatEvent, PlayerJoinEvent, PlayerQuitEvent,
@@ -7,6 +8,7 @@ use crate::event::{
 };
 use crate::perm::PermissionService;
 use crate::server::Server;
+use std::sync::Arc;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -60,6 +62,23 @@ pub trait PluginServices: Send + Sync {
 
     /// Shared permission table (Bukkit nodes + Vault-shaped [`crate::PermissionProvider`]).
     fn permissions(&self) -> &PermissionService;
+
+    /// Players currently online (updated by the host each tick / command).
+    fn online_players(&self) -> Vec<OnlinePlayer>;
+
+    /// Find an online player by exact (case-insensitive) name.
+    fn player_by_name(&self, name: &str) -> Option<OnlinePlayer> {
+        let want = name.to_ascii_lowercase();
+        self.online_players()
+            .into_iter()
+            .find(|p| p.name.to_ascii_lowercase() == want)
+    }
+
+    /// Queue work for the Horizon host (teleport, menus, broadcast, …).
+    fn enqueue(&self, action: HostAction);
+
+    /// Cloneable sink for command closures registered in [`Plugin::on_load`].
+    fn action_sink(&self) -> Arc<dyn Fn(HostAction) + Send + Sync>;
 
     /// Listen for player join.
     fn listen_player_join(

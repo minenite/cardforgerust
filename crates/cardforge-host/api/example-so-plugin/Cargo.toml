@@ -1,0 +1,14 @@
+[package]
+name = "example-so-plugin"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Example CardForge cdylib plugin (drop the .so into plugins/)."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+cardforge-api = { path = "../cardforge-api" }
+log = "0.4"

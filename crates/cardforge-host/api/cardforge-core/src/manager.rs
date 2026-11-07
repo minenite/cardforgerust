@@ -4,13 +4,14 @@ use crate::bus::EventBus;
 use crate::commands::{register_builtins, CommandMap, PluginInfo};
 use crate::loader::{self, DynamicLoadError};
 use cardforge_api::{
-    Command, CommandSender, Event, EventPriority, GameTickEvent, PermissionService, PlayerChatEvent,
-    PlayerJoinEvent, PlayerQuitEvent, PlayerRespawnEvent, Plugin, PluginContext, PluginError,
-    PluginResult, PluginServices, Server, ServerSnapshot, API_VERSION, GAME_VERSION,
+    Command, CommandSender, Event, EventPriority, GameTickEvent, HostAction, OnlinePlayer,
+    PermissionService, PlayerChatEvent, PlayerJoinEvent, PlayerQuitEvent, PlayerRespawnEvent,
+    Plugin, PluginContext, PluginError, PluginResult, PluginServices, Server, ServerSnapshot,
+    API_VERSION, GAME_VERSION,
 };
 use libloading::Library;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use thiserror::Error;
@@ -47,6 +48,10 @@ pub struct CardForge {
     dynamic_libs: Mutex<Vec<Library>>,
     /// Live roster for `/plugins` (shared with command handlers).
     roster: Arc<Mutex<Vec<PluginInfo>>>,
+    /// Horizon host work queued by plugins.
+    actions: Arc<Mutex<VecDeque<HostAction>>>,
+    /// Online players (host refreshes).
+    online: Mutex<Vec<OnlinePlayer>>,
 }
 
 impl CardForge {
@@ -83,7 +88,19 @@ impl CardForge {
             plugins: Mutex::new(Vec::new()),
             dynamic_libs: Mutex::new(Vec::new()),
             roster,
+            actions: Arc::new(Mutex::new(VecDeque::new())),
+            online: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Replace the online-player snapshot (host calls this each tick / command).
+    pub fn set_online(&self, players: Vec<OnlinePlayer>) {
+        *self.online.lock() = players;
+    }
+
+    /// Drain queued host actions (FIFO).
+    pub fn take_actions(&self) -> Vec<HostAction> {
+        self.actions.lock().drain(..).collect()
     }
 
     fn refresh_roster(&self) {
@@ -262,6 +279,21 @@ impl PluginServices for CardForge {
 
     fn permissions(&self) -> &PermissionService {
         &self.permissions
+    }
+
+    fn online_players(&self) -> Vec<OnlinePlayer> {
+        self.online.lock().clone()
+    }
+
+    fn enqueue(&self, action: HostAction) {
+        self.actions.lock().push_back(action);
+    }
+
+    fn action_sink(&self) -> Arc<dyn Fn(HostAction) + Send + Sync> {
+        let actions = Arc::clone(&self.actions);
+        Arc::new(move |action: HostAction| {
+            actions.lock().push_back(action);
+        })
     }
 
     fn listen_player_join(

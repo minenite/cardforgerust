@@ -10,6 +10,7 @@
 
 #![deny(missing_docs)]
 
+mod actions;
 mod command;
 mod event;
 mod perm;
@@ -18,6 +19,7 @@ mod plugin;
 mod server;
 mod text;
 
+pub use actions::{HostAction, MenuClickAction, MenuItem, MenuSlot, OnlinePlayer};
 pub use command::{Command, CommandSender};
 pub use event::{
     AsyncEvent, Cancellable, Event, EventPriority, GameTickEvent, PlayerChatEvent, PlayerJoinEvent,
@@ -42,7 +44,7 @@ macro_rules! declare_plugin {
     ($ty:ty) => {
         /// # Safety
         /// Called once by the CardForge host when loading this `.so`.
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn cardforge_create_plugin() -> *mut () {
             let plugin: Box<dyn $crate::Plugin> = Box::new(<$ty as Default>::default());
             Box::into_raw(Box::new(plugin)) as *mut ()

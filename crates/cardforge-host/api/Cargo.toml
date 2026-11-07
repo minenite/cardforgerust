@@ -21,4 +21,5 @@ cf-friends = { path = "cf-friends" }
 cf-ranks = { path = "cf-ranks" }
 cf-travel = { path = "cf-travel" }
 log = "0.4"
+parking_lot = "0.12"
 uuid = { version = "1", features = ["v4"] }
