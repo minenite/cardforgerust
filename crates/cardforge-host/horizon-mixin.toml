@@ -1,0 +1,17 @@
+# CardForge host: Horizon 26.3 native trait mod.
+# Build with:
+#   horizon-launcher native-build crates/cardforge-host --trust-native-code
+# (from a tree that can see this workspace), or copy this folder into an
+# instance's horizon-native-mods/ and build from the launcher.
+[mod]
+id = "cardforge"
+version = "0.1.0"
+
+[compatibility]
+# Pinned to the Horizon checkout used when this repo was started.
+# Bump when you re-test against a newer Horizon commit.
+horizon_revision = "00f6358e7a7d4f168450fe6d74cbe82100dcc080"
+minecraft = "26.3"
+
+[api]
+path = "api"

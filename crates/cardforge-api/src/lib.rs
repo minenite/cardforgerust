@@ -1,0 +1,32 @@
+//! CardForge API for Horizon 26.3.
+//!
+//! This is the plugin-facing surface: events, players, a [`Plugin`] trait, and
+//! a [`Server`] handle. It is inspired by Bukkit/Paper (and by
+//! [minenite/cardforge](https://github.com/minenite/cardforge)), but it is
+//! **not** a Java plugin host. Existing `.jar` plugins do not load here.
+//!
+//! Plugins are Rust crates that implement [`Plugin`] and are registered with
+//! the host at server start.
+
+#![deny(missing_docs)]
+
+mod event;
+mod player;
+mod plugin;
+mod server;
+
+pub use event::{
+    AsyncEvent, Cancellable, Event, EventPriority, PlayerChatEvent, PlayerJoinEvent,
+    PlayerQuitEvent, PlayerRespawnEvent, GameTickEvent,
+};
+pub use player::Player;
+pub use plugin::{
+    Plugin, PluginContext, PluginDescription, PluginError, PluginResult, PluginServices,
+};
+pub use server::{Server, ServerSnapshot};
+
+/// Minecraft / Horizon game version this API targets.
+pub const GAME_VERSION: &str = "26.3";
+
+/// CardForge API crate version (semver of this crate).
+pub const API_VERSION: &str = env!("CARGO_PKG_VERSION");

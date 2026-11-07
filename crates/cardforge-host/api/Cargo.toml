@@ -1,0 +1,17 @@
+[package]
+name = "mod-cardforge"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "CardForge Horizon trait mod — wires native hooks into cardforge-core."
+
+[dependencies]
+# The launcher rewrites this to the Horizon source it builds from. For local
+# checks against a checkout, prefer a path override in .cargo/config.toml.
+horizon-client = { git = "https://github.com/horizon-rust/horizon", rev = "00f6358e7a7d4f168450fe6d74cbe82100dcc080" }
+cardforge-api = { path = "../../cardforge-api" }
+cardforge-core = { path = "../../cardforge-core" }
+hello-plugin = { path = "../../../examples/hello-plugin" }
+log = "0.4"
+uuid = { version = "1", features = ["v4"] }
