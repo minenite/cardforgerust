@@ -75,7 +75,8 @@ impl Hooks for CardForgeMod {
     }
 
     fn register_commands(&self, _host: &mut dyn Host, event: &mut RegisterCommandsEvent<'_>) {
-        let Some(cf) = runtime().lock().expect("cardforge runtime").as_ref() else {
+        let guard = runtime().lock().expect("cardforge runtime");
+        let Some(cf) = guard.as_ref() else {
             return;
         };
         for (usage, level) in cf.command_usages() {
@@ -88,7 +89,8 @@ impl Hooks for CardForgeMod {
     }
 
     fn player_command(&self, _host: &mut dyn Host, event: &mut PlayerCommandEvent<'_>) -> Flow {
-        let Some(cf) = runtime().lock().expect("cardforge runtime").as_ref() else {
+        let guard = runtime().lock().expect("cardforge runtime");
+        let Some(cf) = guard.as_ref() else {
             return Flow::Continue;
         };
         let sender = CommandSender::Player(Player::named(uuid_of(event.player), event.name));
@@ -107,14 +109,17 @@ impl Hooks for CardForgeMod {
             player: player.clone(),
             join_message: Some(format!("{} joined the game", player.name)),
         };
-        if let Some(cf) = runtime().lock().expect("cardforge runtime").as_ref() {
-            let mut snap = cf.server().snapshot();
-            if !snap.players.iter().any(|p| p.uuid == player.uuid) {
-                snap.players.push(player.clone());
+        {
+            let guard = runtime().lock().expect("cardforge runtime");
+            if let Some(cf) = guard.as_ref() {
+                let mut snap = cf.server().snapshot();
+                if !snap.players.iter().any(|p| p.uuid == player.uuid) {
+                    snap.players.push(player.clone());
+                }
+                snap.game_version = GAME_VERSION.to_string();
+                cf.set_snapshot(snap);
+                cf.call(&mut join);
             }
-            snap.game_version = GAME_VERSION.to_string();
-            cf.set_snapshot(snap);
-            cf.call(&mut join);
         }
         if let Some(msg) = join.join_message {
             host.tell(event.player, Text::literal(msg));
@@ -127,7 +132,8 @@ impl Hooks for CardForgeMod {
             player: player.clone(),
             quit_message: Some(format!("{} left the game", player.name)),
         };
-        if let Some(cf) = runtime().lock().expect("cardforge runtime").as_ref() {
+        let guard = runtime().lock().expect("cardforge runtime");
+        if let Some(cf) = guard.as_ref() {
             let mut snap = cf.server().snapshot();
             snap.players.retain(|p| p.uuid != player.uuid);
             cf.set_snapshot(snap);
@@ -139,7 +145,8 @@ impl Hooks for CardForgeMod {
         let mut respawn = PlayerRespawnEvent {
             player: Player::named(uuid_of(event.player), event.name),
         };
-        if let Some(cf) = runtime().lock().expect("cardforge runtime").as_ref() {
+        let guard = runtime().lock().expect("cardforge runtime");
+        if let Some(cf) = guard.as_ref() {
             cf.call(&mut respawn);
         }
     }
@@ -150,7 +157,8 @@ impl Hooks for CardForgeMod {
             tick: event.context.tick.get(),
             pre,
         };
-        if let Some(cf) = runtime().lock().expect("cardforge runtime").as_ref() {
+        let guard = runtime().lock().expect("cardforge runtime");
+        if let Some(cf) = guard.as_ref() {
             cf.call(&mut tick);
         }
     }
