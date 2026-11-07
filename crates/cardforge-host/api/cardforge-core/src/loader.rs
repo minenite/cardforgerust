@@ -1,7 +1,16 @@
-//! Dynamic `cdylib` plugin loader (`cardforge_create_plugin` entry).
+//! Dynamic `cdylib` plugin loader (C ABI — see `cardforge_api::declare_plugin`).
+//!
+//! Horizon uses mimalloc. A plugin `.so` uses the system allocator. Crossing the
+//! boundary with `Box<dyn Plugin>` / Rust `String` drops SIGSEGVs in `mi_free`.
+//! We only read C strings from the `.so` and build a host-heap [`DynamicShim`].
 
-use cardforge_api::{Plugin, DYNAMIC_PLUGIN_ENTRY};
+use cardforge_api::{
+    colorize, Command, DYNAMIC_PLUGIN_ABI, DYNAMIC_PLUGIN_ABI_SYM, DYNAMIC_PLUGIN_ENTRY,
+    DYNAMIC_PLUGIN_ID_SYM, DYNAMIC_PLUGIN_NAME_SYM, DYNAMIC_PLUGIN_VERSION_SYM, Plugin,
+    PluginContext, PluginDescription, PluginResult, PluginServices, Server,
+};
 use libloading::Library;
+use std::ffi::{CStr, c_char, c_void};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
@@ -17,11 +26,13 @@ pub enum DynamicLoadError {
         #[source]
         source: libloading::Error,
     },
-    /// Missing `cardforge_create_plugin` symbol.
-    #[error("missing cardforge_create_plugin in {}", path.display())]
+    /// Missing required symbol.
+    #[error("missing {symbol} in {}", path.display())]
     MissingEntry {
         /// Library path.
         path: PathBuf,
+        /// Symbol name.
+        symbol: String,
         /// Symbol lookup error.
         #[source]
         source: libloading::Error,
@@ -32,41 +43,134 @@ pub enum DynamicLoadError {
         /// Library path.
         path: PathBuf,
     },
+    /// ABI mismatch.
+    #[error("plugin ABI {got} != host {DYNAMIC_PLUGIN_ABI} in {}", path.display())]
+    AbiMismatch {
+        /// Library path.
+        path: PathBuf,
+        /// Version the `.so` reported.
+        got: u32,
+    },
+    /// Plugin id was empty or invalid.
+    #[error("invalid plugin id in {}", path.display())]
+    BadId {
+        /// Library path.
+        path: PathBuf,
+    },
 }
 
-/// Keep the `Library` alive for as long as the `Plugin` vtable is used.
+type AbiFn = unsafe extern "C" fn() -> u32;
+type CreateFn = unsafe extern "C" fn() -> *mut c_void;
+type CStrFn = unsafe extern "C" fn() -> *const c_char;
+
+/// Host-owned shim built from a dynamic library's C metadata.
+pub struct DynamicShim {
+    id: String,
+    name: String,
+    version: String,
+    path: PathBuf,
+}
+
+impl Plugin for DynamicShim {
+    fn description(&self) -> PluginDescription {
+        let mut d = PluginDescription::new(&self.id, &self.name, &self.version);
+        d.authors = vec!["dynamic".into()];
+        d.description = format!("Loaded from {}", self.path.display());
+        d
+    }
+
+    fn on_load(&mut self, services: &dyn PluginServices) -> PluginResult {
+        let id = self.id.clone();
+        let id_for_cmd = id.clone();
+        let aliases = if id == "example_so" {
+            vec!["exampleso".to_string(), "exso".to_string()]
+        } else {
+            Vec::<String>::new()
+        };
+        services.register_command(
+            Command::new(
+                id.clone(),
+                id.clone(),
+                format!("Ping dynamic plugin {id}"),
+                id.clone(),
+                move |_s, _l, _a| {
+                    vec![colorize(&format!(
+                        "&dDynamic plugin &f{id_for_cmd}&d is loaded."
+                    ))]
+                },
+            )
+            .aliases(aliases),
+        );
+        Ok(())
+    }
+
+    fn on_enable(&mut self, ctx: &PluginContext, _server: &Server) -> PluginResult {
+        log::info!(
+            "cardforge: dynamic shim `{}` enabled ({})",
+            self.id,
+            ctx.data_folder.display()
+        );
+        Ok(())
+    }
+}
+
+/// Keep the `Library` alive for as long as symbols might be used.
 pub struct DynamicPlugin {
-    plugin: Box<dyn Plugin>,
-    /// Must outlive `plugin`.
+    /// Host-heap plugin shim.
+    pub shim: Box<dyn Plugin>,
+    /// Must outlive any future symbol calls.
     _lib: Library,
     /// Source path for logs.
     pub path: PathBuf,
 }
 
 impl DynamicPlugin {
-    /// The loaded plugin object.
-    pub fn plugin_mut(&mut self) -> &mut dyn Plugin {
-        self.plugin.as_mut()
-    }
-
-    /// Take ownership of the plugin while retaining the library (via forget pattern).
-    /// Prefer [`CardForge::register_dynamic`] which stores both.
+    /// Split into parts for [`CardForge::register_dynamic`].
     pub fn into_parts(self) -> (Box<dyn Plugin>, Library, PathBuf) {
-        (self.plugin, self._lib, self.path)
+        (self.shim, self._lib, self.path)
     }
 }
 
-type CreateFn = unsafe extern "C" fn() -> *mut ();
+unsafe fn read_cstr(f: CStrFn, fallback: &str) -> String {
+    let ptr = unsafe { f() };
+    if ptr.is_null() {
+        return fallback.to_string();
+    }
+    unsafe { CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned()
+}
 
-/// Load one `.so` / `.dylib` / `.dll` that exports `cardforge_create_plugin`.
+/// Load one `.so` / `.dylib` / `.dll` that exports the CardForge C ABI.
 pub unsafe fn load_plugin(path: &Path) -> Result<DynamicPlugin, DynamicLoadError> {
     let lib = unsafe { Library::new(path) }.map_err(|source| DynamicLoadError::Open {
         path: path.to_path_buf(),
         source,
     })?;
+
+    let abi_fn: libloading::Symbol<'_, AbiFn> = match unsafe { lib.get(DYNAMIC_PLUGIN_ABI_SYM) } {
+        Ok(s) => s,
+        Err(source) => {
+            // Older example builds without abi symbol — treat as mismatch.
+            return Err(DynamicLoadError::MissingEntry {
+                path: path.to_path_buf(),
+                symbol: "cardforge_plugin_abi".into(),
+                source,
+            });
+        }
+    };
+    let abi = unsafe { abi_fn() };
+    if abi != DYNAMIC_PLUGIN_ABI {
+        return Err(DynamicLoadError::AbiMismatch {
+            path: path.to_path_buf(),
+            got: abi,
+        });
+    }
+
     let create: libloading::Symbol<'_, CreateFn> = unsafe { lib.get(DYNAMIC_PLUGIN_ENTRY) }
         .map_err(|source| DynamicLoadError::MissingEntry {
             path: path.to_path_buf(),
+            symbol: "cardforge_create_plugin".into(),
             source,
         })?;
     let raw = unsafe { create() };
@@ -75,9 +179,44 @@ pub unsafe fn load_plugin(path: &Path) -> Result<DynamicPlugin, DynamicLoadError
             path: path.to_path_buf(),
         });
     }
-    let plugin: Box<dyn Plugin> = *unsafe { Box::from_raw(raw as *mut Box<dyn Plugin>) };
+
+    let id_fn: libloading::Symbol<'_, CStrFn> = unsafe { lib.get(DYNAMIC_PLUGIN_ID_SYM) }
+        .map_err(|source| DynamicLoadError::MissingEntry {
+            path: path.to_path_buf(),
+            symbol: "cardforge_plugin_id".into(),
+            source,
+        })?;
+    let name_fn: libloading::Symbol<'_, CStrFn> = unsafe { lib.get(DYNAMIC_PLUGIN_NAME_SYM) }
+        .map_err(|source| DynamicLoadError::MissingEntry {
+            path: path.to_path_buf(),
+            symbol: "cardforge_plugin_name".into(),
+            source,
+        })?;
+    let ver_fn: libloading::Symbol<'_, CStrFn> = unsafe { lib.get(DYNAMIC_PLUGIN_VERSION_SYM) }
+        .map_err(|source| DynamicLoadError::MissingEntry {
+            path: path.to_path_buf(),
+            symbol: "cardforge_plugin_version".into(),
+            source,
+        })?;
+
+    let id = unsafe { read_cstr(*id_fn, "") };
+    if id.is_empty() || id.contains('\0') {
+        return Err(DynamicLoadError::BadId {
+            path: path.to_path_buf(),
+        });
+    }
+    let name = unsafe { read_cstr(*name_fn, &id) };
+    let version = unsafe { read_cstr(*ver_fn, "0.0.0") };
+
+    let shim: Box<dyn Plugin> = Box::new(DynamicShim {
+        id,
+        name,
+        version,
+        path: path.to_path_buf(),
+    });
+
     Ok(DynamicPlugin {
-        plugin,
+        shim,
         _lib: lib,
         path: path.to_path_buf(),
     })

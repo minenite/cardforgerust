@@ -244,6 +244,23 @@ pub fn handle_menu_click(viewer: Uuid, viewer_name: &str, action: &MenuClickActi
             let _ = shared.take_request(viewer, *id);
             open_requests(&shared, sink.as_ref(), viewer);
         }
+        MenuClickAction::FriendAddMenu => open_add(&shared, sink.as_ref(), viewer),
+        MenuClickAction::FriendAdd(id) => {
+            if *id != viewer {
+                if let Some(target) = FRIENDS_ONLINE
+                    .lock()
+                    .iter()
+                    .find(|p| p.uuid == *id)
+                    .cloned()
+                {
+                    let _ = shared.add_request(viewer, viewer_name, target.uuid);
+                }
+            }
+            open_add(&shared, sink.as_ref(), viewer);
+        }
+        MenuClickAction::Close => {
+            sink(HostAction::CloseMenu { uuid: viewer });
+        }
         MenuClickAction::None => {}
     }
 }
@@ -366,49 +383,46 @@ pub fn set_online(players: &[(Uuid, String)]) {
         .collect();
 }
 
+fn empty_slot() -> MenuSlot {
+    MenuSlot {
+        item: None,
+        action: MenuClickAction::None,
+    }
+}
+
 fn open_list(shared: &Shared, sink: &(dyn Fn(HostAction) + Send + Sync), viewer: Uuid) {
+    // 6-row chest: rows 0–4 friends (45), row 5 toolbar (add / requests / close).
     let friends = shared.friends_of(viewer);
-    let mut slots: Vec<MenuSlot> = Vec::new();
+    let mut slots = vec![empty_slot(); 54];
     for (i, f) in friends.iter().take(45).enumerate() {
-        while slots.len() < i {
-            slots.push(MenuSlot {
-                item: None,
-                action: MenuClickAction::None,
-            });
-        }
-        slots.push(MenuSlot {
+        slots[i] = MenuSlot {
             item: Some(
                 MenuItem::named("minecraft:player_head", format!("&a{}", f.name)).lore([
-                    format!("&7Friends since {}", f.since),
+                    format!("&7UUID &f{}", f.uuid),
                     "&eClick for details".into(),
                 ]),
             ),
             action: MenuClickAction::FriendDetail(f.uuid),
-        });
+        };
     }
     if friends.is_empty() {
-        while slots.len() < 22 {
-            slots.push(MenuSlot {
-                item: None,
-                action: MenuClickAction::None,
-            });
-        }
-        slots.push(MenuSlot {
+        slots[22] = MenuSlot {
             item: Some(
                 MenuItem::named("minecraft:paper", "&7No friends yet")
-                    .lore(["&8/friend add <name>".to_string()]),
+                    .lore(["&8Click emerald to add online players".into()]),
             ),
-            action: MenuClickAction::None,
-        });
+            action: MenuClickAction::FriendAddMenu,
+        };
     }
-    while slots.len() < 53 {
-        slots.push(MenuSlot {
-            item: None,
-            action: MenuClickAction::None,
-        });
-    }
+    slots[45] = MenuSlot {
+        item: Some(
+            MenuItem::named("minecraft:emerald", "&aAdd friend")
+                .lore(["&7Pick an online player".into()]),
+        ),
+        action: MenuClickAction::FriendAddMenu,
+    };
     let pending = shared.requests_for(viewer).len();
-    slots.push(MenuSlot {
+    slots[49] = MenuSlot {
         item: Some(
             MenuItem::named(
                 if pending > 0 {
@@ -417,22 +431,90 @@ fn open_list(shared: &Shared, sink: &(dyn Fn(HostAction) + Send + Sync), viewer:
                     "minecraft:book"
                 },
                 format!(
-                    "{}Friend requests: {pending}",
+                    "{}Requests: {pending}",
                     if pending > 0 { "&e" } else { "&7" }
                 ),
             )
             .lore([if pending > 0 {
-                "&7Click to answer them".into()
+                "&7Click to answer".into()
             } else {
-                "&8Nobody is waiting".into()
+                "&8Nobody waiting".into()
             }]),
         ),
         action: MenuClickAction::FriendRequests,
-    });
+    };
+    slots[53] = MenuSlot {
+        item: Some(MenuItem::named("minecraft:barrier", "&cClose")),
+        action: MenuClickAction::Close,
+    };
     sink(HostAction::OpenMenu {
         uuid: viewer,
         rows: 6,
         title: "&8Friends".into(),
+        slots,
+    });
+}
+
+fn open_add(shared: &Shared, sink: &(dyn Fn(HostAction) + Send + Sync), viewer: Uuid) {
+    let friends = shared.friends_of(viewer);
+    let online = FRIENDS_ONLINE.lock().clone();
+    let mut slots = vec![empty_slot(); 54];
+    let mut slot = 0usize;
+    for p in online.iter().filter(|p| p.uuid != viewer) {
+        if slot >= 45 {
+            break;
+        }
+        let already = friends.iter().any(|f| f.uuid == p.uuid);
+        let pending = shared
+            .requests_for(p.uuid)
+            .iter()
+            .any(|r| r.uuid == viewer);
+        slots[slot] = MenuSlot {
+            item: Some(
+                MenuItem::named(
+                    "minecraft:player_head",
+                    if already {
+                        format!("&a{} &7(friend)", p.name)
+                    } else if pending {
+                        format!("&e{} &7(pending)", p.name)
+                    } else {
+                        format!("&f{}", p.name)
+                    },
+                )
+                .lore([
+                    format!("&7UUID &f{}", p.uuid),
+                    if already || pending {
+                        "&8Already handled".into()
+                    } else {
+                        "&aClick to send request".into()
+                    },
+                ]),
+            ),
+            action: if already || pending {
+                MenuClickAction::None
+            } else {
+                MenuClickAction::FriendAdd(p.uuid)
+            },
+        };
+        slot += 1;
+    }
+    if slot == 0 {
+        slots[22] = MenuSlot {
+            item: Some(
+                MenuItem::named("minecraft:paper", "&7No other players online")
+                    .lore(["&8/friend add <name> when they join".into()]),
+            ),
+            action: MenuClickAction::None,
+        };
+    }
+    slots[49] = MenuSlot {
+        item: Some(MenuItem::named("minecraft:arrow", "&7Back")),
+        action: MenuClickAction::FriendsList,
+    };
+    sink(HostAction::OpenMenu {
+        uuid: viewer,
+        rows: 6,
+        title: "&8Add friend".into(),
         slots,
     });
 }

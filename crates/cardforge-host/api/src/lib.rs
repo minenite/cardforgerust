@@ -107,7 +107,8 @@ fn apply_actions(host: &mut dyn Host, actions: Vec<HostAction>) {
                     .into_iter()
                     .find(|p| p.uuid == uuid.as_u128())
                 {
-                    // Prefer dimension-aware execute; fall back to plain tp.
+                    // Native teleport first (no chat spam); console tp as backup + yaw/pitch.
+                    let moved = host.teleport_mob(&dimension, np.entity_id as u32, position);
                     let line = if np.dimension != dimension {
                         format!(
                             "execute in {dimension} run tp {} {} {} {} {} {}",
@@ -119,8 +120,14 @@ fn apply_actions(host: &mut dyn Host, actions: Vec<HostAction>) {
                             np.name, position[0], position[1], position[2], yaw, pitch
                         )
                     };
-                    if !host.run_command(&line) {
-                        let _ = host.teleport_mob(&dimension, np.entity_id as u32, position);
+                    // Always run tp so yaw/pitch apply even when teleport_mob moved feet.
+                    if !host.run_command(&line) && !moved {
+                        log::warn!(
+                            "cardforge: teleport failed for {} -> {} {:?}",
+                            np.name,
+                            dimension,
+                            position
+                        );
                     }
                 }
             }

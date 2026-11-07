@@ -169,6 +169,7 @@ impl CardForge {
         let loaded = unsafe { loader::load_plugin(path)? };
         let (plugin, lib, _) = loaded.into_parts();
         self.dynamic_libs.lock().push(lib);
+        // Shim is host-allocated; safe to Drop normally.
         self.register(plugin)?;
         Ok(())
     }

@@ -58,18 +58,26 @@ cargo test           # api + core + plugins
 
 ## Dynamic plugins
 
-Export the CardForge entry from a `cdylib`:
+`declare_plugin!` exports a **C ABI** (`cardforge_plugin_abi`, `cardforge_create_plugin`,
+`cardforge_plugin_id` / `_name` / `_version`). The host builds a shim `Plugin` on its
+own heap — never pass `Box<dyn Plugin>` across the `.so` boundary (Horizon's mimalloc
+vs the plugin allocator will SIGSEGV).
 
 ```rust
 use cardforge_api::declare_plugin;
 #[derive(Default)]
 struct MyPlugin;
-impl cardforge_api::Plugin for MyPlugin { /* … */ }
+impl cardforge_api::Plugin for MyPlugin { /* description() id/name/version */ }
 declare_plugin!(MyPlugin);
 ```
 
-Drop the `.so` into the server `plugins/` directory (next to data folders).
-The host loads it at `server_about_to_start`.
+```sh
+cargo build -p example-so-plugin --release
+cp target/release/libexample_so_plugin.so /path/to/server/plugins/
+```
+
+The host loads every `plugins/*.so` at `server_about_to_start` and registers
+`/<id>` (plus `/exampleso` for the shipped example).
 
 ## Building the Horizon host
 

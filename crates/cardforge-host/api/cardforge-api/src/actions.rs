@@ -50,6 +50,12 @@ pub enum MenuClickAction {
     FriendDeny(Uuid),
     /// Open the requests screen.
     FriendRequests,
+    /// Send a friend request to this online player (by uuid).
+    FriendAdd(Uuid),
+    /// Open the “add online” picker.
+    FriendAddMenu,
+    /// Close the open menu.
+    Close,
 }
 
 /// One menu slot: item + optional click action.
