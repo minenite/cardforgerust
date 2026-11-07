@@ -129,11 +129,12 @@ impl Hooks for CardForgeMod {
                 cf.call(&mut chat);
             }
         }
-        for line in chat.replies {
-            event.replies.push(Text::legacy(&colorize(&line)));
+        let cancelled = chat.is_cancelled();
+        for line in &chat.replies {
+            event.replies.push(Text::legacy(&colorize(line)));
         }
         // Horizon cannot rewrite signed chat bodies — cancel only.
-        if chat.is_cancelled() {
+        if cancelled {
             Flow::Cancel
         } else {
             Flow::Continue
