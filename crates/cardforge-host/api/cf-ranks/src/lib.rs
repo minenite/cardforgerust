@@ -210,8 +210,8 @@ fn rank_cmd(shared: &Shared, sender: &CommandSender, args: &[&str]) -> Vec<Strin
             let Some(rank) = Rank::parse(rank_s) else {
                 return vec![colorize("&cUnknown rank.")];
             };
-            // Without a UUID directory, store under a name-derived offline UUID v5-ish nil hash:
-            let uuid = Uuid::new_v5(&Uuid::NAMESPACE_DNS, name.as_bytes());
+            // Name-keyed offline id until a player directory exists.
+            let uuid = name_uuid(name);
             shared.set_rank(uuid, rank);
             // Also set if sender targets self by name.
             if let CommandSender::Player(p) = sender {
@@ -239,6 +239,16 @@ fn rank_label(rank: Rank) -> String {
     } else {
         l.into()
     }
+}
+
+fn name_uuid(name: &str) -> Uuid {
+    let mut bytes = [0u8; 16];
+    for (i, b) in name.to_ascii_lowercase().bytes().enumerate() {
+        bytes[i % 16] ^= b.wrapping_add(i as u8);
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4-ish
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(bytes)
 }
 
 /// Construct for in-process registration.
