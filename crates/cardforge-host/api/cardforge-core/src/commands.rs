@@ -45,16 +45,24 @@ impl CommandMap {
     }
 
     /// Usages for Horizon `register_commands` (one entry per command, not per alias).
+    /// Also emits a bare `plugin` / `cardforge` root so tab-complete works with no args.
     pub fn native_usages(&self) -> Vec<(String, u8)> {
         let map = self.by_label.read();
         let order = self.order.read();
-        order
-            .iter()
-            .filter_map(|name| {
-                let cmd = map.get(name)?;
-                Some((cmd.usage.clone(), cmd.permission_level))
-            })
-            .collect()
+        let mut out = Vec::new();
+        for name in order.iter() {
+            let Some(cmd) = map.get(name) else {
+                continue;
+            };
+            out.push((cmd.usage.clone(), cmd.permission_level));
+            if cmd.name == "plugin" {
+                out.push(("plugin".into(), cmd.permission_level));
+            }
+            if cmd.name == "cardforge" {
+                out.push(("cardforge".into(), cmd.permission_level));
+            }
+        }
+        out
     }
 
     /// Dispatch `raw` (no leading slash). Returns `Some(replies)` if handled.
@@ -109,7 +117,7 @@ pub fn register_builtins(
     map.register(
         Command::new(
             "plugin",
-            "plugin [<name:word>]",
+            "plugin <name:word>",
             "List plugins, or show one",
             "cardforge",
             move |_sender, _label, args| {
@@ -117,10 +125,10 @@ pub fn register_builtins(
                     return format_plugins(&plugins_one());
                 }
                 let want = args[0].to_ascii_lowercase();
-                match plugins_one()
-                    .into_iter()
-                    .find(|p| p.description.id.eq_ignore_ascii_case(&want) || p.description.name.eq_ignore_ascii_case(&want))
-                {
+                match plugins_one().into_iter().find(|p| {
+                    p.description.id.eq_ignore_ascii_case(&want)
+                        || p.description.name.eq_ignore_ascii_case(&want)
+                }) {
                     Some(p) => {
                         let d = &p.description;
                         let state = if p.enabled { "enabled" } else { "disabled" };
@@ -149,28 +157,26 @@ pub fn register_builtins(
     );
 
     let plugins_ver = Arc::clone(&plugins);
+    // Not registered as `version` in the Horizon tree (vanilla owns /version);
+    // player_command still intercepts /version /ver /about before vanilla.
     map.register(
         Command::new(
             "version",
-            "version",
+            "cfversion",
             "Show CardForge and game version",
             "cardforge",
             move |_sender, _label, _args| {
                 version_lines(api_version, game_version, &plugins_ver())
             },
         )
-        .aliases(["ver", "about"]),
+        .aliases(["ver", "about", "cfversion"]),
     );
 
     let plugins_cf = Arc::clone(&plugins);
-    let map_help = map.primary_names(); // snapshot empty now — help reads live via map below
-    let _ = map_help;
-    // Capture CommandMap pointer for help — register after we have map methods via Arc
-    // We'll pass help through a second register that lists known built-in text.
     map.register(
         Command::new(
             "cardforge",
-            "cardforge [help|version|plugins]",
+            "cardforge <action:word>",
             "CardForge control command",
             "cardforge",
             move |_sender, _label, args| {
@@ -178,12 +184,12 @@ pub fn register_builtins(
                 match sub.as_str() {
                     "version" | "ver" => version_lines(api_version, game_version, &plugins_cf()),
                     "plugins" | "pl" | "list" => format_plugins(&plugins_cf()),
-                    "help" | _ => vec![
+                    _ => vec![
                         "CardForge commands:".into(),
-                        "  /cardforge [help|version|plugins]".into(),
-                        "  /version  (aliases: /ver /about)".into(),
+                        "  /cardforge <help|version|plugins>".into(),
+                        "  /cfversion  (also /ver /about /version via intercept)".into(),
                         "  /plugins  (alias: /pl)".into(),
-                        "  /plugin [name]".into(),
+                        "  /plugin <name>".into(),
                         "  /cf  (alias of /cardforge)".into(),
                     ],
                 }
