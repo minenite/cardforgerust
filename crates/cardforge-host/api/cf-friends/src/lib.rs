@@ -182,7 +182,7 @@ impl Plugin for FriendsPlugin {
         services.register_command(
             Command::new(
                 "friend",
-                "friend <action:word>",
+                "friend [action:word] [name:word]",
                 "Friends list / add / GUI",
                 "friends",
                 move |sender, _label, args| {

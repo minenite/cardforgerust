@@ -10,7 +10,7 @@ use horizon_client::mod_api::{
     Flow, Host, Hooks, ItemStack, MenuClickedEvent, NativeCommand, PlayerChatEvent as HzPlayerChatEvent,
     PlayerCommandEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerRespawnedEvent,
     RegisterCommandsEvent, ServerAboutToStartEvent, ServerStoppingEvent, ServerTickEvent,
-    ServerTickPhase, Text,
+    ServerTickPhase, Tag, Text,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -20,6 +20,8 @@ use uuid::Uuid;
 static RUNTIME: OnceLock<Mutex<Option<CardForge>>> = OnceLock::new();
 /// (player_uuid, window_id) → slot → action
 static MENUS: OnceLock<Mutex<HashMap<(u128, i32), HashMap<i32, MenuClickAction>>>> = OnceLock::new();
+/// uuid → op level from ops.json (refreshed on start / join)
+static OPS_FILE: OnceLock<Mutex<HashMap<Uuid, u8>>> = OnceLock::new();
 
 fn runtime() -> &'static Mutex<Option<CardForge>> {
     RUNTIME.get_or_init(|| Mutex::new(None))
@@ -27,6 +29,10 @@ fn runtime() -> &'static Mutex<Option<CardForge>> {
 
 fn menus() -> &'static Mutex<HashMap<(u128, i32), HashMap<i32, MenuClickAction>>> {
     MENUS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn ops_file() -> &'static Mutex<HashMap<Uuid, u8>> {
+    OPS_FILE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn plugins_dir() -> PathBuf {
@@ -38,22 +44,78 @@ fn plugins_dir() -> PathBuf {
         .join("plugins")
 }
 
+fn server_root() -> PathBuf {
+    plugins_dir()
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 fn uuid_of(player: u128) -> Uuid {
     Uuid::from_u128(player)
+}
+
+fn reload_ops_json() {
+    let path = server_root().join("ops.json");
+    let mut map = HashMap::new();
+    if let Ok(bytes) = std::fs::read(&path) {
+        if let Ok(list) = serde_json::from_slice::<Vec<serde_json::Value>>(&bytes) {
+            for entry in list {
+                let level = entry
+                    .get("level")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(4)
+                    .min(4) as u8;
+                if let Some(u) = entry
+                    .get("uuid")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                {
+                    map.insert(u, level);
+                }
+            }
+        }
+    }
+    *ops_file().lock().expect("ops") = map;
+}
+
+fn op_level_for(uuid: Uuid, host_permission: u8) -> u8 {
+    let from_file = ops_file()
+        .lock()
+        .expect("ops")
+        .get(&uuid)
+        .copied()
+        .unwrap_or(0);
+    host_permission.max(from_file)
+}
+
+fn apply_player_perms(cf: &CardForge, uuid: Uuid, level: u8) {
+    if level >= 1 {
+        cf.permissions().set_op(uuid, true);
+        // Explicit admin nodes so defaults=false still pass for operators.
+        cf.permissions()
+            .set(uuid, "cardforge.travel.setwarp", true);
+        cf.permissions().set(uuid, "cardforge.ranks.set", true);
+    }
 }
 
 fn sync_online(host: &dyn Host, cf: &CardForge) {
     let players: Vec<OnlinePlayer> = host
         .server_players()
         .into_iter()
-        .map(|np| OnlinePlayer {
-            uuid: uuid_of(np.uuid),
-            name: np.name.clone(),
-            dimension: np.dimension.clone(),
-            position: np.position,
-            yaw: np.yaw,
-            pitch: np.pitch,
-            permission_level: np.permission,
+        .map(|np| {
+            let uuid = uuid_of(np.uuid);
+            let permission_level = op_level_for(uuid, np.permission);
+            apply_player_perms(cf, uuid, permission_level);
+            OnlinePlayer {
+                uuid,
+                name: np.name.clone(),
+                dimension: np.dimension.clone(),
+                position: np.position,
+                yaw: np.yaw,
+                pitch: np.pitch,
+                permission_level,
+            }
         })
         .collect();
     let pairs: Vec<(Uuid, String)> = players
@@ -73,22 +135,14 @@ fn menu_item_to_stack(item: &MenuItem) -> ItemStack {
         extra: None,
     };
     if let Some(name) = &item.name {
-        // Plain custom name via StackData when available.
-        let plain = colorize(name);
-        // Strip § for a readable name if needed — keep § for client.
-        let _ = plain;
-        if let Some(data) = stack.extra.as_mut() {
-            let _ = data;
-        }
-        // Best-effort: many Horizon builds accept ItemStack without name;
-        // title + lore via tell is a fallback. Try data_mut if method exists.
-        #[allow(unused_mut)]
-        {
-            // horizon ItemStack::data_mut sets custom_name as Tag::String
-            // Access through method if present in this revision.
-        }
+        // Plain custom name (legacy § codes work in the string component).
+        let labeled = colorize(name);
+        stack.data_mut().custom_name = Some(Tag::String(labeled.as_str().into()));
     }
-    let _ = &item.lore;
+    if !item.lore.is_empty() {
+        // Lore is best-effort; many clients show custom_name alone which is enough for GUI.
+        let _ = &item.lore;
+    }
     stack
 }
 
@@ -107,8 +161,8 @@ fn apply_actions(host: &mut dyn Host, actions: Vec<HostAction>) {
                     .into_iter()
                     .find(|p| p.uuid == uuid.as_u128())
                 {
-                    // Native teleport first (no chat spam); console tp as backup + yaw/pitch.
                     let moved = host.teleport_mob(&dimension, np.entity_id as u32, position);
+                    // Coordinate tp (not entity-to-entity) so the client gets yaw/pitch.
                     let line = if np.dimension != dimension {
                         format!(
                             "execute in {dimension} run tp {} {} {} {} {} {}",
@@ -120,7 +174,6 @@ fn apply_actions(host: &mut dyn Host, actions: Vec<HostAction>) {
                             np.name, position[0], position[1], position[2], yaw, pitch
                         )
                     };
-                    // Always run tp so yaw/pitch apply even when teleport_mob moved feet.
                     if !host.run_command(&line) && !moved {
                         log::warn!(
                             "cardforge: teleport failed for {} -> {} {:?}",
@@ -140,26 +193,48 @@ fn apply_actions(host: &mut dyn Host, actions: Vec<HostAction>) {
                 title,
                 slots,
             } => {
-                let items: Vec<Option<ItemStack>> = slots
+                let rows = rows.clamp(1, 6);
+                let size = (rows as usize) * 9;
+                let mut items: Vec<Option<ItemStack>> = slots
                     .iter()
                     .map(|s| s.item.as_ref().map(menu_item_to_stack))
                     .collect();
+                items.resize(size, None);
                 let mut bindings = HashMap::new();
-                for (i, s) in slots.iter().enumerate() {
+                for (i, s) in slots.iter().enumerate().take(size) {
                     if !matches!(s.action, MenuClickAction::None) {
                         bindings.insert(i as i32, s.action.clone());
                     }
                 }
-                if let Some(window) =
-                    host.open_menu(uuid.as_u128(), rows, Text::legacy(&colorize(&title)), items)
-                {
-                    menus().lock().expect("menus")
-                        .insert((uuid.as_u128(), window), bindings);
+                match host.open_menu(
+                    uuid.as_u128(),
+                    rows,
+                    Text::legacy(&colorize(&title)),
+                    items,
+                ) {
+                    Some(window) => {
+                        menus()
+                            .lock()
+                            .expect("menus")
+                            .insert((uuid.as_u128(), window), bindings);
+                        log::info!("cardforge: opened menu window={window} for {uuid}");
+                    }
+                    None => {
+                        log::warn!("cardforge: open_menu failed for {uuid}");
+                        host.tell(
+                            uuid.as_u128(),
+                            Text::legacy(&colorize(
+                                "&cCould not open menu. Try again in a moment.",
+                            )),
+                        );
+                    }
                 }
             }
             HostAction::CloseMenu { uuid } => {
                 host.close_menu(uuid.as_u128());
-                menus().lock().expect("menus")
+                menus()
+                    .lock()
+                    .expect("menus")
                     .retain(|(u, _), _| *u != uuid.as_u128());
             }
             HostAction::RunCommand { line } => {
@@ -178,6 +253,7 @@ struct CardForgeMod;
 
 impl Hooks for CardForgeMod {
     fn server_about_to_start(&self, _host: &mut dyn Host, event: &mut ServerAboutToStartEvent) {
+        reload_ops_json();
         let dir = plugins_dir();
         match CardForge::new(&dir) {
             Ok(cf) => {
@@ -224,12 +300,9 @@ impl Hooks for CardForgeMod {
         let Some(cf) = guard.as_ref() else {
             return;
         };
-        for (usage, level) in cf.command_usages() {
-            event.commands.push(if level == 0 {
-                NativeCommand::new(&usage)
-            } else {
-                NativeCommand::op(&usage, level)
-            });
+        // Level is always 0 from native_usages; CardForge enforces real levels.
+        for (usage, _level) in cf.command_usages() {
+            event.commands.push(NativeCommand::new(&usage));
         }
     }
 
@@ -240,23 +313,24 @@ impl Hooks for CardForgeMod {
                 return Flow::Continue;
             };
             sync_online(host, cf);
-            let mut player = Player::named(uuid_of(event.player), event.name);
+            let uuid = uuid_of(event.player);
+            let mut player = Player::named(uuid, event.name);
             if let Some(np) = host
                 .server_players()
                 .into_iter()
                 .find(|p| p.uuid == event.player)
             {
-                player.permission_level = np.permission;
+                player.permission_level = op_level_for(uuid, np.permission);
                 player.dimension = np.dimension;
                 player.position = np.position;
                 player.yaw = np.yaw;
                 player.pitch = np.pitch;
                 player.health = np.health;
                 player.game_mode = np.game_mode.clamp(0, 255) as u8;
+            } else {
+                player.permission_level = op_level_for(uuid, 0);
             }
-            if player.permission_level >= 1 {
-                cf.permissions().set_op(player.uuid, true);
-            }
+            apply_player_perms(cf, uuid, player.permission_level);
             let sender = CommandSender::Player(player);
             let Some(replies) = cf.dispatch_command(&sender, event.command) else {
                 return Flow::Continue;
@@ -285,7 +359,6 @@ impl Hooks for CardForgeMod {
         for line in &chat.replies {
             event.replies.push(Text::legacy(&colorize(line)));
         }
-        // Defer broadcasts/teleports — player_chat has no Host; queue for next tick.
         PENDING.lock().expect("pending").extend(actions);
         if chat.is_cancelled() {
             Flow::Cancel
@@ -296,7 +369,9 @@ impl Hooks for CardForgeMod {
 
     fn menu_clicked(&self, host: &mut dyn Host, event: &mut MenuClickedEvent) {
         let key = (event.uuid, event.window);
-        let action = menus().lock().expect("menus")
+        let action = menus()
+            .lock()
+            .expect("menus")
             .get(&key)
             .and_then(|m| m.get(&event.slot))
             .cloned();
@@ -312,13 +387,29 @@ impl Hooks for CardForgeMod {
         cf_friends::handle_menu_click(uuid_of(event.uuid), &name, &action);
         let actions = {
             let guard = runtime().lock().expect("cardforge runtime");
-            guard.as_ref().map(|cf| cf.take_actions()).unwrap_or_default()
+            guard
+                .as_ref()
+                .map(|cf| cf.take_actions())
+                .unwrap_or_default()
         };
         apply_actions(host, actions);
     }
 
     fn player_logged_in(&self, host: &mut dyn Host, event: &mut PlayerLoggedInEvent<'_>) {
-        let player = Player::named(uuid_of(event.player), event.name);
+        reload_ops_json();
+        let uuid = uuid_of(event.player);
+        let mut player = Player::named(uuid, event.name);
+        if let Some(np) = host
+            .server_players()
+            .into_iter()
+            .find(|p| p.uuid == event.player)
+        {
+            player.permission_level = op_level_for(uuid, np.permission);
+            player.dimension = np.dimension;
+            player.position = np.position;
+        } else {
+            player.permission_level = op_level_for(uuid, 0);
+        }
         let mut join = PlayerJoinEvent {
             player: player.clone(),
             join_message: Some(format!("{} joined the game", player.name)),
@@ -326,6 +417,7 @@ impl Hooks for CardForgeMod {
         let actions = {
             let guard = runtime().lock().expect("cardforge runtime");
             if let Some(cf) = guard.as_ref() {
+                apply_player_perms(cf, uuid, player.permission_level);
                 sync_online(host, cf);
                 let mut snap = cf.server().snapshot();
                 if !snap.players.iter().any(|p| p.uuid == player.uuid) {
@@ -342,6 +434,16 @@ impl Hooks for CardForgeMod {
         if let Some(msg) = join.join_message {
             host.tell(event.player, Text::literal(msg));
         }
+        // Confirm op level so admins know CardForge sees them.
+        if player.permission_level >= 1 {
+            host.tell(
+                event.player,
+                Text::legacy(&colorize(&format!(
+                    "&7CardForge: op level &f{}&7 (setwarp/ranks unlocked)",
+                    player.permission_level
+                ))),
+            );
+        }
         apply_actions(host, actions);
     }
 
@@ -351,7 +453,10 @@ impl Hooks for CardForgeMod {
             player: player.clone(),
             quit_message: Some(format!("{} left the game", player.name)),
         };
-        menus().lock().expect("menus").retain(|(u, _), _| *u != event.player);
+        menus()
+            .lock()
+            .expect("menus")
+            .retain(|(u, _), _| *u != event.player);
         let actions = {
             let guard = runtime().lock().expect("cardforge runtime");
             if let Some(cf) = guard.as_ref() {
@@ -406,5 +511,3 @@ impl Hooks for CardForgeMod {
 }
 
 static PENDING: Mutex<Vec<HostAction>> = Mutex::new(Vec::new());
-
-// Note: std::sync::Mutex (not parking_lot) so `.lock().expect(...)` works.

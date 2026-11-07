@@ -12,6 +12,14 @@ fn reply(line: impl Into<String>) -> String {
     colorize(&line.into())
 }
 
+/// Replace the first whitespace-separated token of a usage with `alias`.
+fn rewrite_usage_label(usage: &str, alias: &str) -> String {
+    match usage.split_once(char::is_whitespace) {
+        Some((_, rest)) => format!("{alias} {rest}"),
+        None => alias.to_string(),
+    }
+}
+
 /// Registry of labels → commands.
 #[derive(Default)]
 pub struct CommandMap {
@@ -51,8 +59,12 @@ impl CommandMap {
         self.order.read().clone()
     }
 
-    /// Usages for Horizon `register_commands` (one entry per command, not per alias).
-    /// Also emits a bare `plugin` / `cardforge` root so tab-complete works with no args.
+    /// Usages for Horizon `register_commands`.
+    ///
+    /// Always advertises **level 0** to Horizon so the client can type every
+    /// CardForge command; [`Self::dispatch_with_perms`] still enforces each
+    /// command's real `permission_level` + permission node. Aliases get their
+    /// own usage lines (Horizon only merges by usage string, not by our map).
     pub fn native_usages(&self) -> Vec<(String, u8)> {
         let map = self.by_label.read();
         let order = self.order.read();
@@ -61,12 +73,29 @@ impl CommandMap {
             let Some(cmd) = map.get(name) else {
                 continue;
             };
-            out.push((cmd.usage.clone(), cmd.permission_level));
+            out.push((cmd.usage.clone(), 0));
+            for alias in &cmd.aliases {
+                out.push((rewrite_usage_label(&cmd.usage, alias), 0));
+            }
+            // Bare roots so tab-complete works with no args.
             if cmd.name == "plugin" {
-                out.push(("plugin".into(), cmd.permission_level));
+                out.push(("plugin".into(), 0));
             }
             if cmd.name == "cardforge" {
-                out.push(("cardforge".into(), cmd.permission_level));
+                out.push(("cardforge".into(), 0));
+            }
+            if cmd.name == "friend" {
+                out.push(("friend".into(), 0));
+                out.push(("friends".into(), 0));
+                out.push(("f".into(), 0));
+            }
+            if cmd.name == "warp" {
+                out.push(("warp".into(), 0));
+                out.push(("warps".into(), 0));
+            }
+            if cmd.name == "rank" {
+                out.push(("rank".into(), 0));
+                out.push(("ranks".into(), 0));
             }
         }
         out
@@ -94,20 +123,27 @@ impl CommandMap {
         let cmd = self.get(&label)?;
         if sender.permission_level() < cmd.permission_level {
             return Some(vec![reply(format!(
-                "&cYou do not have permission to use /{}.",
-                cmd.name
+                "&cYou need op level {}+ to use /{} (you have {}).",
+                cmd.permission_level,
+                cmd.name,
+                sender.permission_level()
             ))]);
         }
-        if let (Some(perms), Some(node)) = (perms, cmd.permission.as_deref()) {
-            let who = match sender {
-                CommandSender::Console => PermissibleId::Console,
-                CommandSender::Player(p) => PermissibleId::Player(p.uuid),
-            };
-            if !perms.has(who, node) {
-                return Some(vec![reply(format!(
-                    "&cYou lack permission &f{node}&c to use /{}.",
-                    cmd.name
-                ))]);
+        // Operators (level ≥ 1) and console skip Bukkit-node checks — same idea as
+        // Bukkit op. Non-ops still need the node / default grant.
+        let is_opish = sender.is_console() || sender.permission_level() >= 1;
+        if !is_opish {
+            if let (Some(perms), Some(node)) = (perms, cmd.permission.as_deref()) {
+                let who = match sender {
+                    CommandSender::Console => PermissibleId::Console,
+                    CommandSender::Player(p) => PermissibleId::Player(p.uuid),
+                };
+                if !perms.has(who, node) {
+                    return Some(vec![reply(format!(
+                        "&cYou lack permission &f{node}&c to use /{}.",
+                        cmd.name
+                    ))]);
+                }
             }
         }
         Some((cmd.handler)(sender, &label, &args))

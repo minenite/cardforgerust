@@ -22,4 +22,5 @@ cf-ranks = { path = "cf-ranks" }
 cf-travel = { path = "cf-travel" }
 log = "0.4"
 parking_lot = "0.12"
+serde_json = "1"
 uuid = { version = "1", features = ["v4"] }

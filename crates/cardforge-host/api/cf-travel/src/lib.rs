@@ -67,6 +67,11 @@ impl Plugin for TravelPlugin {
 
     fn on_load(&mut self, services: &dyn PluginServices) -> PluginResult {
         services.permissions().set_default("cardforge.travel.warp", true);
+        // Ops pass every node via set_op; non-ops need an explicit grant.
+        // Default false — operators are marked op on join / command dispatch.
+        services
+            .permissions()
+            .set_default("cardforge.travel.setwarp", false);
         let sink = services.action_sink();
         let shared = Arc::clone(&self.shared);
 
@@ -75,8 +80,8 @@ impl Plugin for TravelPlugin {
         services.register_command(
             Command::new(
                 "warp",
-                "warp <name:word>",
-                "Teleport to a warp",
+                "warp [name:word]",
+                "List warps or teleport to one",
                 "travel",
                 move |sender, _label, args| warp_cmd(&s1, sink1.as_ref(), sender, args),
             )
@@ -93,7 +98,8 @@ impl Plugin for TravelPlugin {
                 "travel",
                 move |sender, _label, args| setwarp_cmd(&s2, sender, args),
             )
-            .level(3)
+            // Level 1+ (any operator). Horizon sees level 0; we enforce here.
+            .level(1)
             .permission("cardforge.travel.setwarp"),
         );
 
@@ -106,7 +112,7 @@ impl Plugin for TravelPlugin {
                 "travel",
                 move |sender, _label, args| delwarp_cmd(&s3, sender, args),
             )
-            .level(3)
+            .level(1)
             .permission("cardforge.travel.setwarp"),
         );
         Ok(())

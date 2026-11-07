@@ -456,4 +456,40 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(dir);
     }
+
+    #[test]
+    fn op_player_passes_leveled_command_and_native_usages_are_public() {
+        use cardforge_api::{colorize, Command, CommandSender, Player};
+        let dir = std::env::temp_dir().join(format!("cardforge-op-{}", Uuid::new_v4()));
+        let cf = CardForge::new(&dir).unwrap();
+        cf.permissions().set_default("cardforge.travel.setwarp", false);
+        cf.commands().register(
+            Command::new(
+                "setwarp",
+                "setwarp <name:word>",
+                "test",
+                "travel",
+                |_s, _l, _a| vec![colorize("&aok")],
+            )
+            .level(1)
+            .permission("cardforge.travel.setwarp"),
+        );
+        let mut player = Player::named(Uuid::nil(), "Tequilas");
+        player.permission_level = 0;
+        let denied = cf
+            .dispatch_command(&CommandSender::Player(player.clone()), "setwarp home")
+            .unwrap();
+        assert!(denied[0].contains("op level"), "got {:?}", denied);
+
+        player.permission_level = 4;
+        let ok = cf
+            .dispatch_command(&CommandSender::Player(player), "setwarp home")
+            .unwrap();
+        assert!(ok[0].contains("ok"), "got {:?}", ok);
+
+        for (usage, level) in cf.command_usages() {
+            assert_eq!(level, 0, "Horizon must see level 0 for {usage}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

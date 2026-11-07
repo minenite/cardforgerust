@@ -159,10 +159,11 @@ impl Plugin for RanksPlugin {
         );
 
         let shared_cmd = Arc::clone(&self.shared);
+        services.permissions().set_default("cardforge.ranks.set", false);
         services.register_command(
             Command::new(
                 "rank",
-                "rank <action:word>",
+                "rank [action:word] [player:word] [rank:word]",
                 "View or set ranks",
                 "ranks",
                 move |sender, _label, args| rank_cmd(&shared_cmd, sender, args),
@@ -197,8 +198,8 @@ fn rank_cmd(shared: &Shared, sender: &CommandSender, args: &[&str]) -> Vec<Strin
             vec![colorize(&format!("&7Your rank: {}", r.prefix(&p.name)))]
         }
         "set" => {
-            if sender.permission_level() < 3 {
-                return vec![colorize("&cOp level 3+ required to set ranks.")];
+            if sender.permission_level() < 1 {
+                return vec![colorize("&cOperators only: /rank set <player> <rank>")];
             }
             let (Some(name), Some(rank_s)) = (args.get(1).copied(), args.get(2).copied()) else {
                 return vec![colorize("&7Usage: /rank set <player> <rank>")];
