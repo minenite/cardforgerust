@@ -101,16 +101,31 @@ impl Hooks for CardForgeMod {
         }
     }
 
-    fn player_command(&self, _host: &mut dyn Host, event: &mut PlayerCommandEvent<'_>) -> Flow {
+    fn player_command(&self, host: &mut dyn Host, event: &mut PlayerCommandEvent<'_>) -> Flow {
         let guard = runtime().lock().expect("cardforge runtime");
         let Some(cf) = guard.as_ref() else {
             return Flow::Continue;
         };
-        let sender = CommandSender::Player(Player::named(uuid_of(event.player), event.name));
-        // Sync Horizon op level into CardForge perms.
-        if sender.permission_level() >= 2 {
-            cf.permissions().set_op(uuid_of(event.player), true);
+        let mut player = Player::named(uuid_of(event.player), event.name);
+        // Horizon already knows their ops.json level — CardForge used to leave this at 0,
+        // so /setwarp (level 3) always failed even for operators.
+        if let Some(np) = host
+            .server_players()
+            .into_iter()
+            .find(|p| p.uuid == event.player)
+        {
+            player.permission_level = np.permission;
+            player.dimension = np.dimension;
+            player.position = np.position;
+            player.yaw = np.yaw;
+            player.pitch = np.pitch;
+            player.health = np.health;
+            player.game_mode = np.game_mode.clamp(0, 255) as u8;
         }
+        if player.permission_level >= 1 {
+            cf.permissions().set_op(player.uuid, true);
+        }
+        let sender = CommandSender::Player(player);
         let Some(replies) = cf.dispatch_command(&sender, event.command) else {
             return Flow::Continue;
         };
