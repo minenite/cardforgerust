@@ -1,5 +1,6 @@
 //! Plugin trait and description.
 
+use crate::command::Command;
 use crate::event::{
     EventPriority, GameTickEvent, PlayerChatEvent, PlayerJoinEvent, PlayerQuitEvent,
     PlayerRespawnEvent,
@@ -95,6 +96,9 @@ pub trait PluginServices: Send + Sync {
         priority: EventPriority,
         handler: Box<dyn Fn(&mut GameTickEvent) + Send + Sync>,
     );
+
+    /// Register a slash command (tab-complete + dispatch).
+    fn register_command(&self, command: Command);
 }
 
 /// Result alias for plugin enable/disable.

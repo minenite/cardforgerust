@@ -4,12 +4,14 @@
 //! [`cardforge_core::CardForge`] so Rust plugins see Bukkit-style events.
 
 use cardforge_api::{
-    GameTickEvent, Player, PlayerJoinEvent, PlayerQuitEvent, PlayerRespawnEvent, GAME_VERSION,
+    CommandSender, GameTickEvent, Player, PlayerJoinEvent, PlayerQuitEvent, PlayerRespawnEvent,
+    GAME_VERSION,
 };
 use cardforge_core::CardForge;
 use horizon_client::mod_api::{
-    Host, Hooks, PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerRespawnedEvent,
-    ServerAboutToStartEvent, ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Text,
+    Flow, Host, Hooks, NativeCommand, PlayerCommandEvent, PlayerLoggedInEvent,
+    PlayerLoggedOutEvent, PlayerRespawnedEvent, RegisterCommandsEvent, ServerAboutToStartEvent,
+    ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Text,
 };
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -70,6 +72,33 @@ impl Hooks for CardForgeMod {
         }
         *runtime().lock().expect("cardforge runtime") = None;
         log::info!("cardforge: stopped");
+    }
+
+    fn register_commands(&self, _host: &mut dyn Host, event: &mut RegisterCommandsEvent<'_>) {
+        let Some(cf) = runtime().lock().expect("cardforge runtime").as_ref() else {
+            return;
+        };
+        for (usage, level) in cf.command_usages() {
+            event.commands.push(if level == 0 {
+                NativeCommand::new(&usage)
+            } else {
+                NativeCommand::op(&usage, level)
+            });
+        }
+    }
+
+    fn player_command(&self, _host: &mut dyn Host, event: &mut PlayerCommandEvent<'_>) -> Flow {
+        let Some(cf) = runtime().lock().expect("cardforge runtime").as_ref() else {
+            return Flow::Continue;
+        };
+        let sender = CommandSender::Player(Player::named(uuid_of(event.player), event.name));
+        let Some(replies) = cf.dispatch_command(&sender, event.command) else {
+            return Flow::Continue;
+        };
+        for line in replies {
+            event.replies.push(Text::literal(line));
+        }
+        Flow::Cancel
     }
 
     fn player_logged_in(&self, host: &mut dyn Host, event: &mut PlayerLoggedInEvent<'_>) {

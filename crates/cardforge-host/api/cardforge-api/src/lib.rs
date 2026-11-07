@@ -10,14 +10,16 @@
 
 #![deny(missing_docs)]
 
+mod command;
 mod event;
 mod player;
 mod plugin;
 mod server;
 
+pub use command::{Command, CommandSender};
 pub use event::{
-    AsyncEvent, Cancellable, Event, EventPriority, PlayerChatEvent, PlayerJoinEvent,
-    PlayerQuitEvent, PlayerRespawnEvent, GameTickEvent,
+    AsyncEvent, Cancellable, Event, EventPriority, GameTickEvent, PlayerChatEvent, PlayerJoinEvent,
+    PlayerQuitEvent, PlayerRespawnEvent,
 };
 pub use player::Player;
 pub use plugin::{
