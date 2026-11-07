@@ -359,7 +359,17 @@ mod tests {
         let ver = cf.dispatch_command(&sender, "version").unwrap();
         assert!(ver[0].contains("CardForge"), "got {:?}", ver);
         let cfhelp = cf.dispatch_command(&sender, "cardforge").unwrap();
-        assert!(cfhelp[0].contains("CardForge commands"), "got {:?}", cfhelp);
+        assert!(
+            cfhelp[0].contains("CardForge") && cfhelp[0].contains("commands"),
+            "got {:?}",
+            cfhelp
+        );
+        let list = cf.dispatch_command(&sender, "plugins").unwrap();
+        assert!(
+            list[0].contains('§') && list[0].contains("Hello"),
+            "expected colored plugin list, got {:?}",
+            list
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 }

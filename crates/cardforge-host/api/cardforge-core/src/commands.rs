@@ -1,9 +1,14 @@
 //! Command map and built-in CardForge commands.
 
-use cardforge_api::{Command, CommandSender, PluginDescription};
+use cardforge_api::{colorize, Command, CommandSender, PluginDescription};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Bukkit-style `&` formatting applied to every command reply line.
+fn reply(line: impl Into<String>) -> String {
+    colorize(&line.into())
+}
 
 /// Registry of labels → commands.
 #[derive(Default)]
@@ -76,10 +81,10 @@ impl CommandMap {
         let args: Vec<&str> = parts.collect();
         let cmd = self.get(&label)?;
         if sender.permission_level() < cmd.permission_level {
-            return Some(vec![format!(
-                "You do not have permission to use /{}.",
+            return Some(vec![reply(format!(
+                "&cYou do not have permission to use /{}.",
                 cmd.name
-            )]);
+            ))]);
         }
         Some((cmd.handler)(sender, &label, &args))
     }
@@ -129,28 +134,11 @@ pub fn register_builtins(
                     p.description.id.eq_ignore_ascii_case(&want)
                         || p.description.name.eq_ignore_ascii_case(&want)
                 }) {
-                    Some(p) => {
-                        let d = &p.description;
-                        let state = if p.enabled { "enabled" } else { "disabled" };
-                        vec![
-                            format!("{} v{} ({state})", d.name, d.version),
-                            format!("id: {}", d.id),
-                            if d.description.is_empty() {
-                                String::new()
-                            } else {
-                                d.description.clone()
-                            },
-                            if d.authors.is_empty() {
-                                String::new()
-                            } else {
-                                format!("authors: {}", d.authors.join(", "))
-                            },
-                        ]
-                        .into_iter()
-                        .filter(|s| !s.is_empty())
-                        .collect()
-                    }
-                    None => vec![format!("Unknown plugin `{want}`.")],
+                    Some(p) => describe_plugin(&p),
+                    None => vec![
+                        reply("&cThis server is not running any plugin by that name."),
+                        reply("&7Use /plugins to get a list of plugins."),
+                    ],
                 }
             },
         ),
@@ -185,12 +173,12 @@ pub fn register_builtins(
                     "version" | "ver" => version_lines(api_version, game_version, &plugins_cf()),
                     "plugins" | "pl" | "list" => format_plugins(&plugins_cf()),
                     _ => vec![
-                        "CardForge commands:".into(),
-                        "  /cardforge <help|version|plugins>".into(),
-                        "  /cfversion  (also /ver /about /version via intercept)".into(),
-                        "  /plugins  (alias: /pl)".into(),
-                        "  /plugin <name>".into(),
-                        "  /cf  (alias of /cardforge)".into(),
+                        reply("&6CardForge &7commands:"),
+                        reply("&e  /cardforge &7<&fhelp&7|&fversion&7|&fplugins&7>"),
+                        reply("&e  /cfversion  &8(also /ver /about /version)"),
+                        reply("&e  /plugins  &8(alias: /pl)"),
+                        reply("&e  /plugin &7<&fname&7>"),
+                        reply("&e  /cf  &8(alias of /cardforge)"),
                     ],
                 }
             },
@@ -201,31 +189,73 @@ pub fn register_builtins(
 
 fn format_plugins(plugins: &[PluginInfo]) -> Vec<String> {
     if plugins.is_empty() {
-        return vec!["Plugins (0): none".into()];
+        return vec![reply("&fPlugins (0): &7none")];
     }
+    // Bukkit: green = enabled, red + * = disabled; comma separators reset to white.
     let names: Vec<String> = plugins
         .iter()
         .map(|p| {
             if p.enabled {
-                p.description.name.clone()
+                format!("&a{}", p.description.name)
             } else {
-                format!("{}*", p.description.name)
+                format!("&c{}*", p.description.name)
             }
         })
         .collect();
-    vec![format!(
-        "Plugins ({}): {}",
+    vec![reply(format!(
+        "&fPlugins ({}): {}",
         plugins.len(),
-        names.join(", ")
-    )]
+        names.join("&f, ")
+    ))]
+}
+
+fn describe_plugin(p: &PluginInfo) -> Vec<String> {
+    let d = &p.description;
+    let mut lines = vec![reply(format!(
+        "&a{} &fversion &a{}",
+        d.name, d.version
+    ))];
+    let state = if p.enabled {
+        "&aenabled"
+    } else {
+        "&cdisabled"
+    };
+    lines.push(reply(format!("&7id: &f{} &7({state}&7)", d.id)));
+    if !d.description.is_empty() {
+        lines.push(reply(format!("&7{}", d.description)));
+    }
+    if !d.authors.is_empty() {
+        let label = if d.authors.len() == 1 {
+            "Author"
+        } else {
+            "Authors"
+        };
+        let authors = d
+            .authors
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let sep = if i == 0 {
+                    String::new()
+                } else if i + 1 == d.authors.len() {
+                    "&f and ".to_string()
+                } else {
+                    "&f, ".to_string()
+                };
+                format!("{sep}&a{a}")
+            })
+            .collect::<String>();
+        lines.push(reply(format!("&7{label}: {authors}")));
+    }
+    lines
 }
 
 fn version_lines(api: &str, game: &str, plugins: &[PluginInfo]) -> Vec<String> {
+    let enabled = plugins.iter().filter(|p| p.enabled).count();
     vec![
-        format!("This server is running CardForge {api} for Horizon / Minecraft {game}"),
-        format!(
-            "Plugins: {} loaded",
-            plugins.iter().filter(|p| p.enabled).count()
-        ),
+        reply(format!(
+            "This server is running &6CardForge&r version {api}&o (Implementing API version {game})"
+        )),
+        reply(format!("&7Plugins: &f{enabled} &7loaded")),
     ]
 }

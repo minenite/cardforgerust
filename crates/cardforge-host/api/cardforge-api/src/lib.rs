@@ -15,6 +15,7 @@ mod event;
 mod player;
 mod plugin;
 mod server;
+mod text;
 
 pub use command::{Command, CommandSender};
 pub use event::{
@@ -26,6 +27,7 @@ pub use plugin::{
     Plugin, PluginContext, PluginDescription, PluginError, PluginResult, PluginServices,
 };
 pub use server::{Server, ServerSnapshot};
+pub use text::colorize;
 
 /// Minecraft / Horizon game version this API targets.
 pub const GAME_VERSION: &str = "26.3";

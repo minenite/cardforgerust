@@ -98,7 +98,8 @@ impl Hooks for CardForgeMod {
             return Flow::Continue;
         };
         for line in replies {
-            event.replies.push(Text::literal(line));
+            // Built-ins emit § codes via `colorize`; Horizon paints them as spans.
+            event.replies.push(Text::legacy(&line));
         }
         Flow::Cancel
     }
