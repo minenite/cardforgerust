@@ -1,0 +1,13 @@
+[package]
+name = "hello-plugin"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["icedmoca <blazehavenservers@gmail.com>"]
+publish = false
+description = "Example CardForge plugin that greets players on join."
+
+[dependencies]
+cardforge-api = { path = "../cardforge-api" }
+cardforge-core = { path = "../cardforge-core" }
+log = "0.4"

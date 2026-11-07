@@ -10,7 +10,7 @@ version = "0.1.0"
 [compatibility]
 # Pinned to the Horizon checkout used when this repo was started.
 # Bump when you re-test against a newer Horizon commit.
-horizon_revision = "00f6358e7a7d4f168450fe6d74cbe82100dcc080"
+horizon_revision = "66f3981f522b24c250b21523a70080965b940424"
 minecraft = "26.3"
 
 [api]

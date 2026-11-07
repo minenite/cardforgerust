@@ -35,13 +35,16 @@ Pinned Horizon revision for the host: `00f6358e7a7d4f168450fe6d74cbe82100dcc080`
 ## Workspace
 
 ```
-crates/
-  cardforge-api/     # what plugin authors depend on
-  cardforge-core/    # host internals
-  cardforge-host/    # Horizon native trait mod (not in default cargo workspace)
-examples/
-  hello-plugin/      # greets players on join
+crates/cardforge-host/
+  horizon-mixin.toml
+  api/                 # Horizon trait mod (native-build stages this whole folder)
+    cardforge-api/     # plugin-facing API
+    cardforge-core/    # event bus + plugin manager
+    hello-plugin/      # example join greeter
+    src/lib.rs         # Hooks → CardForge
 ```
+
+Nested under `api/` on purpose: `horizon-launcher native-build` only stages the `[api]` package tree.
 
 ```sh
 cargo test           # api + core + example

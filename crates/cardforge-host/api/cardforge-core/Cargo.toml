@@ -1,0 +1,19 @@
+[package]
+name = "cardforge-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["icedmoca <blazehavenservers@gmail.com>"]
+repository = "https://github.com/minenite/cardforgerust"
+description = "CardForge plugin manager and event bus for Horizon 26.3."
+publish = false
+
+[dependencies]
+cardforge-api = { path = "../cardforge-api" }
+log = "0.4"
+parking_lot = "0.12"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+env_logger = "0.11"
