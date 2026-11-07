@@ -17,5 +17,8 @@ horizon-client = { git = "https://github.com/horizon-rust/horizon", rev = "66f39
 cardforge-api = { path = "cardforge-api" }
 cardforge-core = { path = "cardforge-core" }
 hello-plugin = { path = "hello-plugin" }
+cf-friends = { path = "cf-friends" }
+cf-ranks = { path = "cf-ranks" }
+cf-travel = { path = "cf-travel" }
 log = "0.4"
 uuid = { version = "1", features = ["v4"] }

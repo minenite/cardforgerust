@@ -5,10 +5,10 @@
 | Layer | Crate | Role |
 | --- | --- | --- |
 | Game | Horizon `horizon-client` / `horizon-server` | Real 26.3 simulation |
-| Bridge | `cardforge-host` | Horizon `Hooks` → CardForge events |
-| Runtime | `cardforge-core` | Plugin manager, event bus, load order |
+| Bridge | `cardforge-host` (`mod-cardforge`) | Horizon `Hooks` → CardForge events |
+| Runtime | `cardforge-core` | Plugin manager, bus, commands, `.so` loader, perms |
 | API | `cardforge-api` | What plugins compile against |
-| Plugins | e.g. `hello-plugin`, later ServerPlugin-rust | Gameplay / network logic |
+| Plugins | `hello-plugin`, `cf-friends`, `cf-ranks`, `cf-travel`, future `.so` | Gameplay |
 
 ## Event flow (join)
 
@@ -21,6 +21,16 @@ Horizon native_player_logged_in
       -> Host::tell(join_message)
 ```
 
+## Event flow (chat)
+
+```
+Horizon native_player_chat
+  -> Hooks::player_chat
+      -> EventBus.call(PlayerChatEvent)
+          -> plugins may cancel + push replies
+      -> Flow::Cancel drops broadcast (signed body cannot be rewritten)
+```
+
 ## Relation to minenite/cardforge
 
 Java CardForge = Paper API on NeoForge mixins, loads `.jar` plugins.
@@ -31,13 +41,14 @@ CardForgeRust = same product shape for Horizon:
 - Plugin lifecycle (load → enable → disable)
 - Hard / soft depends + topological enable order
 - Per-plugin data folder under `plugins/<id>/`
+- Bukkit-style permission nodes
+- Dynamic `cdylib` plugins via `cardforge_create_plugin`
 
 It does **not** embed a JVM or rewrite CraftBukkit class-by-class.
 
 ## Next milestones
 
-1. Wire host through `horizon-launcher native-build` against local Horizon; boot dedicated server; see hello join line.
-2. Chat hook (`native_player_command` / chat packet) → `PlayerChatEvent`.
-3. Command registrar + `/cardforge` debug command.
-4. Port pieces of `serverplugin` (friends, ranks, travel) as Rust plugins.
-5. Optional cdylib plugin loader once the in-process API is stable.
+1. Host teleport / position for `/warp` apply
+2. Example out-of-tree `.so` plugin + packaging docs
+3. Port more ServerPlugin surfaces as needed
+4. Astris web client MP against this stack ([minenite/Astris](https://github.com/minenite/Astris))

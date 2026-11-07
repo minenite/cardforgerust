@@ -3,6 +3,7 @@
 use cardforge_api::{
     EventPriority, Plugin, PluginContext, PluginDescription, PluginResult, PluginServices, Server,
 };
+use cardforge_api::Cancellable;
 
 /// Greeter plugin.
 pub struct HelloPlugin;
@@ -27,6 +28,19 @@ impl Plugin for HelloPlugin {
                 );
                 event.join_message =
                     Some(format!("Welcome to CardForge, {}!", event.player.name));
+            }),
+        );
+        // Demo cancel: messages containing "!cancel" are dropped with a whisper.
+        services.listen_player_chat(
+            "hello",
+            EventPriority::High,
+            Box::new(|event| {
+                if event.message.to_ascii_lowercase().contains("!cancel") {
+                    event.set_cancelled(true);
+                    event
+                        .replies
+                        .push("&cChat cancelled by hello-plugin (&f!cancel&c).".into());
+                }
             }),
         );
         Ok(())

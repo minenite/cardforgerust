@@ -5,6 +5,7 @@ use crate::event::{
     EventPriority, GameTickEvent, PlayerChatEvent, PlayerJoinEvent, PlayerQuitEvent,
     PlayerRespawnEvent,
 };
+use crate::perm::PermissionService;
 use crate::server::Server;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -56,6 +57,9 @@ pub struct PluginContext {
 pub trait PluginServices: Send + Sync {
     /// Live server snapshot handle.
     fn server(&self) -> &Server;
+
+    /// Shared permission table (Bukkit nodes + Vault-shaped [`crate::PermissionProvider`]).
+    fn permissions(&self) -> &PermissionService;
 
     /// Listen for player join.
     fn listen_player_join(

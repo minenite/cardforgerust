@@ -1,0 +1,16 @@
+[package]
+name = "cf-ranks"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["icedmoca <blazehavenservers@gmail.com>"]
+publish = false
+description = "CardForge ranks (ServerPlugin Rank/RankStore port)."
+
+[dependencies]
+cardforge-api = { path = "../cardforge-api" }
+log = "0.4"
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["serde", "v4", "v5"] }

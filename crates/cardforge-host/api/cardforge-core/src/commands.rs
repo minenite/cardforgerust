@@ -1,6 +1,8 @@
 //! Command map and built-in CardForge commands.
 
-use cardforge_api::{colorize, Command, CommandSender, PluginDescription};
+use cardforge_api::{
+    colorize, Command, CommandSender, PermissibleId, PermissionService, PluginDescription,
+};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -72,6 +74,16 @@ impl CommandMap {
 
     /// Dispatch `raw` (no leading slash). Returns `Some(replies)` if handled.
     pub fn dispatch(&self, sender: &CommandSender, raw: &str) -> Option<Vec<String>> {
+        self.dispatch_with_perms(sender, raw, None)
+    }
+
+    /// Like [`Self::dispatch`], also checking Bukkit-style permission nodes when `perms` is set.
+    pub fn dispatch_with_perms(
+        &self,
+        sender: &CommandSender,
+        raw: &str,
+        perms: Option<&PermissionService>,
+    ) -> Option<Vec<String>> {
         let raw = raw.trim();
         if raw.is_empty() {
             return None;
@@ -85,6 +97,18 @@ impl CommandMap {
                 "&cYou do not have permission to use /{}.",
                 cmd.name
             ))]);
+        }
+        if let (Some(perms), Some(node)) = (perms, cmd.permission.as_deref()) {
+            let who = match sender {
+                CommandSender::Console => PermissibleId::Console,
+                CommandSender::Player(p) => PermissibleId::Player(p.uuid),
+            };
+            if !perms.has(who, node) {
+                return Some(vec![reply(format!(
+                    "&cYou lack permission &f{node}&c to use /{}.",
+                    cmd.name
+                ))]);
+            }
         }
         Some((cmd.handler)(sender, &label, &args))
     }
@@ -115,7 +139,8 @@ pub fn register_builtins(
             "cardforge",
             move |_sender, _label, _args| format_plugins(&plugins_list()),
         )
-        .aliases(["pl"]),
+        .aliases(["pl"])
+        .permission("cardforge.command.plugins"),
     );
 
     let plugins_one = Arc::clone(&plugins);

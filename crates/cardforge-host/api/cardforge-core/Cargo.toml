@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 cardforge-api = { path = "../cardforge-api" }
+libloading = "0.8"
 log = "0.4"
 parking_lot = "0.12"
 thiserror = "2"

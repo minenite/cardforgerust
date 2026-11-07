@@ -7,8 +7,8 @@
 ```
 Horizon 26.3 (horizon-server / horizon-client)
     -> cardforge-host (native trait mod)
-        -> cardforge-core (plugin manager + event bus)
-            -> your Rust plugins
+        -> cardforge-core (plugin manager + event bus + .so loader)
+            -> hello / friends / ranks / travel (+ drop-in *.so)
 ```
 
 This is the Horizon successor to [minenite/cardforge](https://github.com/minenite/cardforge)
@@ -19,18 +19,23 @@ that implement `cardforge_api::Plugin`.
 Existing Bukkit/Paper `.jar` plugins **do not** load here. Port them (or rewrite
 ServerPlugin-style logic) against `cardforge-api`.
 
+Web client (separate): [minenite/Astris](https://github.com/minenite/Astris).
+
 ## Status
 
 | Piece | State |
 | --- | --- |
-| `cardforge-api` | Working — events, `Plugin`, `Server`, `Player` |
-| `cardforge-core` | Working — bus + load order + unit tests |
-| `hello-plugin` | Working example (join greeting) |
-| `cardforge-host` | Draft Horizon trait mod — needs `horizon-launcher native-build` against a Horizon tree |
-| Dynamic `.so` plugins | Not yet — plugins are linked / registered in-process |
-| Chat / commands / perms | Stubbed next |
+| `cardforge-api` | Working — events, Plugin, Server, colorize, permissions |
+| `cardforge-core` | Working — bus, commands, `.so` loader, unit tests |
+| `hello-plugin` | Working — join greeting + `!cancel` chat demo |
+| `cf-friends` / `cf-ranks` / `cf-travel` | Working — ServerPlugin subset ports |
+| `cardforge-host` | Working — native-build against Horizon nightly; dedicated smoke |
+| Dynamic `.so` plugins | Working — `declare_plugin!` + `plugins/*.so` |
+| Chat cancel | Working — Horizon signed chat cannot rewrite body |
+| Perms | Working — nodes + wildcards + op; Vault-shaped provider |
 
-Pinned Horizon revision for the host: `00f6358e7a7d4f168450fe6d74cbe82100dcc080` (26.3).
+Pinned Horizon revision for the host: see `crates/cardforge-host/horizon-mixin.toml`
+(currently nightly `66f3981…` via `horizon-client` git dep).
 
 ## Workspace
 
@@ -38,71 +43,46 @@ Pinned Horizon revision for the host: `00f6358e7a7d4f168450fe6d74cbe82100dcc080`
 crates/cardforge-host/
   horizon-mixin.toml
   api/                 # Horizon trait mod (native-build stages this whole folder)
-    cardforge-api/     # plugin-facing API
-    cardforge-core/    # event bus + plugin manager
-    hello-plugin/      # example join greeter
+    cardforge-api/
+    cardforge-core/
+    hello-plugin/
+    cf-friends/
+    cf-ranks/
+    cf-travel/
     src/lib.rs         # Hooks → CardForge
 ```
 
-Nested under `api/` on purpose: `horizon-launcher native-build` only stages the `[api]` package tree.
-
 ```sh
-cargo test           # api + core + example
-cargo build          # same, without the Horizon host
+cargo test           # api + core + plugins
 ```
 
-## Writing a plugin
+## Dynamic plugins
+
+Export the CardForge entry from a `cdylib`:
 
 ```rust
-use cardforge_api::{
-    EventPriority, Plugin, PluginDescription, PluginResult, PluginServices,
-};
-
-pub struct MyPlugin;
-
-impl Plugin for MyPlugin {
-    fn description(&self) -> PluginDescription {
-        PluginDescription::new("my_plugin", "My Plugin", "0.1.0")
-    }
-
-    fn on_load(&mut self, services: &dyn PluginServices) -> PluginResult {
-        services.listen_player_join(
-            "my_plugin",
-            EventPriority::Normal,
-            Box::new(|event| {
-                log::info!("{} joined", event.player.name);
-            }),
-        );
-        Ok(())
-    }
-}
+use cardforge_api::declare_plugin;
+#[derive(Default)]
+struct MyPlugin;
+impl cardforge_api::Plugin for MyPlugin { /* … */ }
+declare_plugin!(MyPlugin);
 ```
 
-Register it from the host (today) the same way `hello-plugin` is registered in
-`crates/cardforge-host/api/src/lib.rs`.
+Drop the `.so` into the server `plugins/` directory (next to data folders).
+The host loads it at `server_about_to_start`.
 
 ## Building the Horizon host
 
-1. Have a Horizon checkout that matches (or update) `horizon_revision` in
-   `crates/cardforge-host/horizon-mixin.toml`.
-2. Point the host's `horizon-client` dependency at that checkout (path override
-   or let `horizon-launcher native-build` rewrite it).
-3. Build:
-
 ```sh
-horizon-launcher native-build crates/cardforge-host --trust-native-code
+horizon-launcher native-build crates/cardforge-host \
+  --server-output /path/to/engine-dir \
+  --version nightly-2026-11-05-66f3981 \
+  --trust-native-code \
+  --profile performance
 ```
 
-4. Install the resulting `.hnmod` into the server/client instance and enable it.
-5. Optional: `CARDFORGE_PLUGINS=/path/to/plugins` overrides the plugins data dir
-   (default: `./plugins` under the process cwd).
-
-## Why not “copy CardForge Java”?
-
-CardForge on NeoForge is ~1.7k Java files implementing Paper’s API on Mixin.
-Horizon’s mod surface is Rust trait hooks (`docs/native-mods.md`). Re‑hosting
-the JVM would fight Horizon’s design. CardForgeRust re‑implements the *plugin
-product* on that surface instead.
+Point `server.toml` `[engine].path` at the resulting `horizon-engine`.
+Optional: `CARDFORGE_PLUGINS=/path/to/plugins`.
 
 ## License
 

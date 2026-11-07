@@ -4,14 +4,15 @@
 //! [`cardforge_core::CardForge`] so Rust plugins see Bukkit-style events.
 
 use cardforge_api::{
-    CommandSender, GameTickEvent, Player, PlayerJoinEvent, PlayerQuitEvent, PlayerRespawnEvent,
+    colorize, Cancellable, CommandSender, GameTickEvent, Player,
+    PlayerChatEvent as CfPlayerChatEvent, PlayerJoinEvent, PlayerQuitEvent, PlayerRespawnEvent,
     GAME_VERSION,
 };
 use cardforge_core::CardForge;
 use horizon_client::mod_api::{
-    Flow, Host, Hooks, NativeCommand, PlayerCommandEvent, PlayerLoggedInEvent,
-    PlayerLoggedOutEvent, PlayerRespawnedEvent, RegisterCommandsEvent, ServerAboutToStartEvent,
-    ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Text,
+    Flow, Host, Hooks, NativeCommand, PlayerChatEvent as HzPlayerChatEvent, PlayerCommandEvent,
+    PlayerLoggedInEvent, PlayerLoggedOutEvent, PlayerRespawnedEvent, RegisterCommandsEvent,
+    ServerAboutToStartEvent, ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Text,
 };
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -48,8 +49,20 @@ impl Hooks for CardForgeMod {
         let dir = plugins_dir();
         match CardForge::new(&dir) {
             Ok(cf) => {
-                if let Err(err) = cf.register(hello_plugin::plugin()) {
-                    log::error!("cardforge: register hello: {err}");
+                for (name, result) in [
+                    ("hello", cf.register(hello_plugin::plugin())),
+                    ("friends", cf.register(cf_friends::plugin())),
+                    ("ranks", cf.register(cf_ranks::plugin())),
+                    ("travel", cf.register(cf_travel::plugin())),
+                ] {
+                    if let Err(err) = result {
+                        log::error!("cardforge: register {name}: {err}");
+                    }
+                }
+                match cf.load_dynamic_plugins() {
+                    Ok(n) if n > 0 => log::info!("cardforge: loaded {n} dynamic plugin(s)"),
+                    Ok(_) => {}
+                    Err(err) => log::error!("cardforge: dynamic load: {err}"),
                 }
                 if let Err(err) = cf.enable_all() {
                     log::error!("cardforge: enable plugins: {err}");
@@ -94,14 +107,37 @@ impl Hooks for CardForgeMod {
             return Flow::Continue;
         };
         let sender = CommandSender::Player(Player::named(uuid_of(event.player), event.name));
+        // Sync Horizon op level into CardForge perms.
+        if sender.permission_level() >= 2 {
+            cf.permissions().set_op(uuid_of(event.player), true);
+        }
         let Some(replies) = cf.dispatch_command(&sender, event.command) else {
             return Flow::Continue;
         };
         for line in replies {
-            // Built-ins emit § codes via `colorize`; Horizon paints them as spans.
             event.replies.push(Text::legacy(&line));
         }
         Flow::Cancel
+    }
+
+    fn player_chat(&self, event: &mut HzPlayerChatEvent<'_>) -> Flow {
+        let player = Player::named(uuid_of(event.player), event.name);
+        let mut chat = CfPlayerChatEvent::new(player, event.message);
+        {
+            let guard = runtime().lock().expect("cardforge runtime");
+            if let Some(cf) = guard.as_ref() {
+                cf.call(&mut chat);
+            }
+        }
+        for line in chat.replies {
+            event.replies.push(Text::legacy(&colorize(&line)));
+        }
+        // Horizon cannot rewrite signed chat bodies — cancel only.
+        if chat.is_cancelled() {
+            Flow::Cancel
+        } else {
+            Flow::Continue
+        }
     }
 
     fn player_logged_in(&self, host: &mut dyn Host, event: &mut PlayerLoggedInEvent<'_>) {

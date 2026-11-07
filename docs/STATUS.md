@@ -5,19 +5,22 @@ Started: 2026-11-07 by icedmoca.
 ## Done
 
 - [x] Repo scaffold under `minenite/cardforgerust`
-- [x] `cardforge-api` events + `Plugin` + `Server`
-- [x] `cardforge-core` bus + manager + tests
-- [x] `hello-plugin` example
-- [x] Draft `cardforge-host` trait mod for Horizon 26.3
+- [x] `cardforge-api` events + `Plugin` + `Server` + `colorize` + permissions
+- [x] `cardforge-core` bus + manager + commands + dynamic `.so` loader
+- [x] `hello-plugin` (join greeting + `!cancel` chat demo)
+- [x] `cardforge-host` Horizon trait mod — native-build + dedicated smoke
+- [x] Built-in commands `/plugins` `/plugin` `/version` `/cardforge` (colored)
+- [x] `Hooks::player_chat` → `PlayerChatEvent` (cancel + sender replies)
+- [x] Bukkit-style permission nodes + Vault-shaped `PermissionProvider`
+- [x] Dynamic plugins: `cardforge_create_plugin` / `declare_plugin!`
+- [x] Gameplay ports: `cf-friends`, `cf-ranks`, `cf-travel`
 
-## In progress
+## In progress / follow-ups
 
-- [ ] First successful `native-build` + dedicated server smoke test
-
-## Blocked / needs machine time
-
-- Horizon trait mod compile (pulls full `horizon-client`)
-- Confirm `Host::tell` join message behaviour on dedicated vs integrated
+- [ ] Warp teleport apply (needs Horizon Host position API)
+- [ ] Friend add by live online UUID resolve
+- [ ] Rank chat prefix on the wire (Horizon signed chat cannot rewrite body)
+- [ ] Example cdylib plugin crate + install docs
 
 ## Explicit non-goals (for now)
 

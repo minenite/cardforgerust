@@ -4,6 +4,9 @@ members = [
     "crates/cardforge-host/api/cardforge-api",
     "crates/cardforge-host/api/cardforge-core",
     "crates/cardforge-host/api/hello-plugin",
+    "crates/cardforge-host/api/cf-friends",
+    "crates/cardforge-host/api/cf-ranks",
+    "crates/cardforge-host/api/cf-travel",
 ]
 exclude = [
     # Built by horizon-launcher native-build; depends on horizon-client.
@@ -13,6 +16,9 @@ default-members = [
     "crates/cardforge-host/api/cardforge-api",
     "crates/cardforge-host/api/cardforge-core",
     "crates/cardforge-host/api/hello-plugin",
+    "crates/cardforge-host/api/cf-friends",
+    "crates/cardforge-host/api/cf-ranks",
+    "crates/cardforge-host/api/cf-travel",
 ]
 
 [workspace.package]

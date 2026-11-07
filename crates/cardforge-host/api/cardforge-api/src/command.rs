@@ -47,6 +47,8 @@ pub struct Command {
     pub description: String,
     /// Minimum operator level (0 = everyone).
     pub permission_level: u8,
+    /// Optional Bukkit-style permission node (checked when set).
+    pub permission: Option<String>,
     /// Owning plugin id (`cardforge` for built-ins).
     pub plugin: String,
     /// Handler: return reply lines (no slash formatting).
@@ -68,6 +70,7 @@ impl Command {
             usage: usage.into(),
             description: description.into(),
             permission_level: 0,
+            permission: None,
             plugin: plugin.into(),
             handler: Arc::new(handler),
         }
@@ -82,6 +85,12 @@ impl Command {
     /// Require this operator level.
     pub fn level(mut self, level: u8) -> Self {
         self.permission_level = level.min(4);
+        self
+    }
+
+    /// Require this permission node (in addition to op level).
+    pub fn permission(mut self, node: impl Into<String>) -> Self {
+        self.permission = Some(node.into());
         self
     }
 }

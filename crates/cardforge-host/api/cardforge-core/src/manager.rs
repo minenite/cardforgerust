@@ -2,11 +2,13 @@
 
 use crate::bus::EventBus;
 use crate::commands::{register_builtins, CommandMap, PluginInfo};
+use crate::loader::{self, DynamicLoadError};
 use cardforge_api::{
-    Command, CommandSender, Event, EventPriority, GameTickEvent, PlayerChatEvent, PlayerJoinEvent,
-    PlayerQuitEvent, PlayerRespawnEvent, Plugin, PluginContext, PluginError, PluginResult,
-    PluginServices, Server, ServerSnapshot, API_VERSION, GAME_VERSION,
+    Command, CommandSender, Event, EventPriority, GameTickEvent, PermissionService, PlayerChatEvent,
+    PlayerJoinEvent, PlayerQuitEvent, PlayerRespawnEvent, Plugin, PluginContext, PluginError,
+    PluginResult, PluginServices, Server, ServerSnapshot, API_VERSION, GAME_VERSION,
 };
+use libloading::Library;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -22,6 +24,9 @@ pub enum LoadError {
     /// Circular hard-dependency.
     #[error("plugin dependency cycle involving `{0}`")]
     Cycle(String),
+    /// Dynamic library failure.
+    #[error(transparent)]
+    Dynamic(#[from] DynamicLoadError),
 }
 
 struct LoadedPlugin {
@@ -35,8 +40,11 @@ pub struct CardForge {
     server: Server,
     bus: EventBus,
     commands: CommandMap,
+    permissions: PermissionService,
     plugins_dir: PathBuf,
     plugins: Mutex<Vec<LoadedPlugin>>,
+    /// Keep cdylib handles alive while plugins run.
+    dynamic_libs: Mutex<Vec<Library>>,
     /// Live roster for `/plugins` (shared with command handlers).
     roster: Arc<Mutex<Vec<PluginInfo>>>,
 }
@@ -54,6 +62,11 @@ impl CardForge {
         });
         let roster = Arc::new(Mutex::new(Vec::new()));
         let commands = CommandMap::new();
+        let permissions = PermissionService::new();
+        // Default: everyone can list plugins / version (Bukkit-like).
+        permissions.set_default("cardforge.command.plugins", true);
+        permissions.set_default("cardforge.command.version", true);
+        permissions.set_default("cardforge.command.cardforge", true);
         let roster_for_cmds = Arc::clone(&roster);
         register_builtins(
             &commands,
@@ -65,8 +78,10 @@ impl CardForge {
             server,
             bus: EventBus::new(),
             commands,
+            permissions,
             plugins_dir,
             plugins: Mutex::new(Vec::new()),
+            dynamic_libs: Mutex::new(Vec::new()),
             roster,
         })
     }
@@ -99,6 +114,11 @@ impl CardForge {
         &self.commands
     }
 
+    /// Bukkit-style permission nodes.
+    pub fn permissions(&self) -> &PermissionService {
+        &self.permissions
+    }
+
     /// Snapshot of registered plugins for `/plugins`.
     pub fn plugin_infos(&self) -> Vec<PluginInfo> {
         self.roster.lock().clone()
@@ -106,7 +126,34 @@ impl CardForge {
 
     /// Run a player/console command line (no leading slash). `Some(replies)` if handled.
     pub fn dispatch_command(&self, sender: &CommandSender, raw: &str) -> Option<Vec<String>> {
-        self.commands.dispatch(sender, raw)
+        self.commands
+            .dispatch_with_perms(sender, raw, Some(&self.permissions))
+    }
+
+    /// Load every `*.so` / `*.dylib` / `*.dll` in the plugins directory and register them.
+    pub fn load_dynamic_plugins(&self) -> Result<usize, LoadError> {
+        let mut n = 0;
+        for path in loader::discover(&self.plugins_dir) {
+            match self.register_dynamic(&path) {
+                Ok(()) => {
+                    log::info!("cardforge: loaded dynamic plugin {}", path.display());
+                    n += 1;
+                }
+                Err(err) => {
+                    log::error!("cardforge: skip {}: {err}", path.display());
+                }
+            }
+        }
+        Ok(n)
+    }
+
+    /// Open one dynamic library and register its plugin (not enabled yet).
+    pub fn register_dynamic(&self, path: &Path) -> Result<(), LoadError> {
+        let loaded = unsafe { loader::load_plugin(path)? };
+        let (plugin, lib, _) = loaded.into_parts();
+        self.dynamic_libs.lock().push(lib);
+        self.register(plugin)?;
+        Ok(())
     }
 
     /// Usages to push into Horizon `register_commands`.
@@ -211,6 +258,10 @@ impl CardForge {
 impl PluginServices for CardForge {
     fn server(&self) -> &Server {
         &self.server
+    }
+
+    fn permissions(&self) -> &PermissionService {
+        &self.permissions
     }
 
     fn listen_player_join(

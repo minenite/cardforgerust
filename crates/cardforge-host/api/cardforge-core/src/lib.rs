@@ -7,10 +7,12 @@
 
 mod bus;
 mod commands;
+mod loader;
 mod manager;
 
 pub use bus::{EventBus, ListenerId};
 pub use commands::{register_builtins, CommandMap, PluginInfo};
+pub use loader::{discover as discover_dynamic_plugins, load_plugin, DynamicLoadError, DynamicPlugin};
 pub use manager::{CardForge, LoadError};
 
 pub use cardforge_api as api;

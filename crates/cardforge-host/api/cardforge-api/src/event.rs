@@ -74,6 +74,11 @@ impl Event for PlayerQuitEvent {
 }
 
 /// A player sent chat (before the server broadcasts it).
+///
+/// Horizon’s native hook can **cancel** the broadcast and reply to the sender.
+/// Signed chat cannot rewrite the body, so [`Self::message`] / [`Self::format`]
+/// mutations are visible to later listeners but do not change what other players
+/// see unless you cancel and handle delivery yourself.
 #[derive(Clone, Debug)]
 pub struct PlayerChatEvent {
     /// The speaker.
@@ -82,6 +87,8 @@ pub struct PlayerChatEvent {
     pub message: String,
     /// Format string with `{player}` and `{message}` placeholders.
     pub format: String,
+    /// Lines sent only to the speaker (legacy `&` codes OK).
+    pub replies: Vec<String>,
     cancelled: bool,
 }
 
@@ -92,8 +99,16 @@ impl PlayerChatEvent {
             player,
             message: message.into(),
             format: "<{player}> {message}".to_string(),
+            replies: Vec::new(),
             cancelled: false,
         }
+    }
+
+    /// Render [`Self::format`] with the current player name and message.
+    pub fn rendered(&self) -> String {
+        self.format
+            .replace("{player}", &self.player.name)
+            .replace("{message}", &self.message)
     }
 }
 
